@@ -6,8 +6,8 @@
 segment::segment(int height, int width, int y, int x) : height(height), width(width), y(y), x(x) {
     p_win = newwin(height, width, y, x);
 }
-segment::~segment() { delwin(p_win); }
 
+void segment::destruct() { delwin(p_win); }
 void segment::set_color(int i) { wattron(p_win, COLOR_PAIR(i)); }
 void segment::clear() { werase(p_win); }
 void segment::place_n(int x, int n, char c) {
@@ -23,7 +23,7 @@ graph::graph(int height, int width, int y, int x) : height(height), width(width)
     segments.reserve(3);
     int y_off = 0;
     for (int h : heights) {
-        segments.push_back(segment(h, width, y + y_off, x));
+        segments.emplace_back(h, width, y + y_off, x);
         y_off += h;
     }
     std::reverse(segments.begin(), segments.end());

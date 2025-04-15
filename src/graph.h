@@ -8,11 +8,12 @@ class segment {
 public:
     int height;
     segment(int height, int width, int y, int x);
+
     void set_color(int i);
-    ~segment();
     void clear();
     void place_n(int x, int n, char c = '#');
     void refresh();
+    void destruct();
 };
 
 class graph {
