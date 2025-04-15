@@ -1,42 +1,47 @@
-#include "graph.h"
 #include <ncurses.h>
+#include <vector>
+#include <algorithm>
+#include "graph.h"
 
-bar::bar(int height, int width, int y, int x) : height(height), width(width), y(y), x(x)
-{
-    //p_win = newwin(height, width, y_pos, x_pos);
+segment::segment(int height, int width, int y, int x) : height(height), width(width), y(y), x(x) {
+    p_win = newwin(height, width, y, x);
 }
+segment::~segment() { delwin(p_win); }
 
-bar::~bar()
-{
-    delwin(p_win);
+void segment::set_color(int i) { wattron(p_win, COLOR_PAIR(i)); }
+void segment::clear() { werase(p_win); }
+void segment::place_n(int x, int n, char c) {
+    for (int i = 0, y = height - 1; i < n; i++, y--)
+        mvwaddch(p_win, y, x, c);
 }
+void segment::refresh() { wrefresh(p_win); }
 
-void bar::draw(int pair)
-{
-    wbkgd(p_win, COLOR_PAIR(pair));
-    wrefresh(p_win);
-}
+graph::graph(int height, int width, int y, int x) : height(height), width(width), y(y), x(x) {
 
-void bar::make_segments(){
-    int h1 = int(0.2 * height) || 2;
-    int h2 = int(0.1 * height) || 1;
-    int h3 = height - (h1 + h2);
-    int heights[] = {h1, h2, h3};
-    p_win = (WINDOW**)malloc(3*sizeof(WINDOW *));
-    for(int i=0, y_s = y; i<3; i++){
-        p_win[i] = newwin()
+    std::vector<int> heights = { 2, 1, 7 };
+
+    segments.reserve(3);
+    int y_off = 0;
+    for (int h : heights) {
+        segments.push_back(segment(h, width, y + y_off, x));
+        y_off += h;
     }
+    std::reverse(segments.begin(), segments.end());
 }
 
-
-
-
-graph::graph(int y, int x, int n_bars, int bar_width, int bar_height, int bar_margin) : n_bars(n_bars)
-{
-    bars.reserve(n_bars);
-    for (int i = 0, x_bar = x; i < n_bars; i++, x_bar += (bar_width + bar_margin))
-    {
-        bars.emplace_back(bar_height, bar_width, y, x_bar);
-        bars[i].draw(i % 2 + 1);
+void graph::update_activations(const std::vector<float>& activations) {
+    for (auto& segment : segments) segment.clear();
+    int act, n;
+    auto p_act = activations.begin();
+    for (int i = 0; i < width && p_act != activations.end(); i++, p_act++) {
+        act = *p_act * height;
+        printw("%d, ", act);
+        for (auto& segment : segments) {
+            n = std::min(act, segment.height);
+            segment.place_n(i, n);
+            act -= n;
+            if (act == 0) break;
+        }
     }
+    for (auto& segment : segments) segment.refresh();
 }

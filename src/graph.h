@@ -2,23 +2,23 @@
 #include <ncurses.h>
 #include <vector>
 
-class bar
-{
-    WINDOW **p_win;
-    int height, width, y, x, heights[3];
+class segment {
+    WINDOW* p_win;
+    int width, y, x;
 public:
-    ~bar();
-    bar(int height, int width, int y, int x);
-    void draw(int pair);
-    void set_activation(float a);
-    void make_segments();
+    int height;
+    segment(int height, int width, int y, int x);
+    void set_color(int i);
+    ~segment();
+    void clear();
+    void place_n(int x, int n, char c = '#');
+    void refresh();
 };
 
-class graph
-{
-    int n_bars;
-    std::vector<bar> bars;
-
+class graph {
+    int height, width, y, x;
 public:
-    graph(int y, int x, int n_bars, int bar_width, int bar_height, int bar_margin);
+    std::vector<segment> segments;
+    graph(int height, int width, int y, int x);
+    void update_activations(const std::vector<float>& activations);
 };
