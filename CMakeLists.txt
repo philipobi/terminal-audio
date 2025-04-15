@@ -8,12 +8,15 @@ find_package(Curses REQUIRED)
 include_directories(
     ${CURSES_INCLUDE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/miniaudio
 )
 
 add_library(graph src/graph.cpp)
+add_library(miniaudio miniaudio/miniaudio.c)
 
 add_executable(curses-tutorial src/main.cpp)
 target_link_libraries(curses-tutorial 
     ${CURSES_LIBRARIES}
     graph
+    miniaudio
 )
