@@ -5,15 +5,7 @@
 #include <thread>
 #include <stdio.h>
 #include "graph.h"
-#include "miniaudio.h"
-
-ma_engine g_engine;
-
-void playback_data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
-{
-    printf("callback\n");
-    ma_engine_read_pcm_frames(&g_engine, pOutput, frameCount, NULL);
-}
+#include "audio.h"
 
 int main(int argc, const char** argv)
 {
@@ -22,28 +14,14 @@ int main(int argc, const char** argv)
         return -1;
     }
     
-    
-    ma_device device;
-    ma_sound sound;
-    
-    auto deviceConfig = ma_device_config_init(ma_device_type_playback);
-    deviceConfig.dataCallback = playback_data_callback;
-    ma_device_init(NULL, &deviceConfig, &device);
-    
-    auto engineConfig = ma_engine_config_init();
-    engineConfig.pDevice = &device;
-    ma_engine_init(&engineConfig, &g_engine);
-    ma_engine_set_volume(&g_engine, 0.1);
-    ma_sound_init_from_file(&g_engine, argv[1], MA_SOUND_FLAG_STREAM, NULL, NULL, &sound);
-    ma_sound_start(&sound);
+    player p = player(0.1, argv[1]);
+    if(p.status == SUCCESS) {
+        p.play();
+        printf("Press enter to quit...");
+        getchar();
+    }
 
-    printf("Press enter to quit...");
-    getchar();
-
-    ma_sound_uninit(&sound);
-    ma_engine_uninit(&g_engine);
-    ma_device_uninit(&device);
-
+    p.cleanup();
     return 0;
 
     initscr();

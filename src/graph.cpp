@@ -4,6 +4,7 @@
 #include "graph.h"
 
 segment::segment(int height, int width, int y, int x) : height(height), width(width), y(y), x(x) {
+    //try shared_ptr
     p_win = newwin(height, width, y, x);
 }
 
