@@ -3,9 +3,23 @@
 #include <cmath>
 #include <chrono>
 #include <thread>
+#include <iostream>
 #include <stdio.h>
 #include "graph.h"
 #include "audio.h"
+
+void play (player& p) {
+    p.play();
+    while (p.is_playing()) {
+        p.msg_queue.push("Hello");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+}
+
+void printer(player& p){
+    std::cout << "Waiting for messages" << std::endl;
+    while (p.is_playing()) std::cout << p.msg_queue.pop() << std::endl;
+}
 
 int main(int argc, const char** argv)
 {
@@ -13,12 +27,15 @@ int main(int argc, const char** argv)
         printf("No filename provided\n");
         return -1;
     }
-    
+
     player p = player(0.1, argv[1]);
-    if(p.status == SUCCESS) {
-        p.play();
-        printf("Press enter to quit...");
-        getchar();
+
+    if (p.status == SUCCESS) {
+        
+        std::thread player_thread(play, std::ref(p));
+        std::thread printer_thread(printer, std::ref(p));
+        player_thread.join();
+        printer_thread.join();
     }
 
     p.cleanup();
