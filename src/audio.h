@@ -1,4 +1,5 @@
 #pragma once
+#include <stdlib.h>
 #include <string>
 #include "miniaudio.h"
 #include "queue.h"
@@ -11,6 +12,27 @@ enum AudioStatus {
     ERR_INIT_PBUF,
     ERR_INIT_RBUF,
     ERR_INIT_CONV,
+};
+
+class AudioBuffer {
+    void* const buf;
+public:
+    ma_uint32 frameCount;
+    ma_uint32 channels;
+    void* pData = NULL;
+    AudioStatus status;
+    AudioBuffer(ma_uint32 frameCount, ma_uint32 channels, ma_format format) :
+        frameCount(frameCount),
+        channels(channels),
+        buf((void* const)malloc(frameCount* channels * ma_get_bytes_per_sample(format)))
+    {
+        reset_ptr();
+        status = buf == NULL ? ERR_INIT_PBUF : SUCCESS;
+    }
+    ~AudioBuffer() { free(buf); }
+    void reset_ptr() {
+        pData = buf;
+    }
 };
 
 class fft {
@@ -26,10 +48,9 @@ public:
 
 struct ctx {
     ma_engine* pEngine = NULL;
-    ma_audio_buffer* pBuffer = NULL;
+    AudioBuffer* pBuffer = NULL;
     fft* pFFT = NULL;
-    Queue<std::string> *pMsgQueue = NULL;
-    ma_uint64 framesRead;
+    Queue<std::string>* pMsgQueue = NULL;
 };
 
 
@@ -43,7 +64,8 @@ class player {
     ma_device device, * pDevice = NULL;
     ma_engine engine, * pEngine = NULL;
     ma_sound sound, * pSound = NULL;
-    ma_audio_buffer* pBuffer = NULL;
+    AudioBuffer* pBuffer = NULL;
+    fft* pFFT = NULL;
 public:
     Queue<std::string> msg_queue;
     ctx context;
