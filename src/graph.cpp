@@ -31,12 +31,11 @@ graph::~graph(){
     for(auto& segment : segments) delwin(segment.p_win);
 }
 
-void graph::update_activations(const std::vector<float>& activations) {
+void graph::update_activations(const double *pAct) {
     for (auto& segment : segments) segment.clear();
     int act, n;
-    auto p_act = activations.begin();
-    for (int i = 0; i < width && p_act != activations.end(); i++, p_act++) {
-        act = *p_act * height;
+    for (int i = 0; i < width; i++) {
+        act = *pAct++ * height;
         for (auto& segment : segments) {
             n = std::min(act, segment.height);
             segment.place_n(i, n);

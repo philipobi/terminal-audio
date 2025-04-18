@@ -9,14 +9,15 @@ std::mutex m;
 
 void playback_data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
 {
-    printf("callback\n");
+    //printf("callback\n");
     auto pContext = (ctx*)(pDevice->pUserData);
     if (!pContext->init) return;
     auto pBufPlayback = pContext->pBufPlayback;
     auto pMemPlayback = pBufPlayback->get_ptr(0);
     ma_engine_read_pcm_frames(pContext->pEngine, pMemPlayback, min(frameCount, pBufPlayback->frameSize), &pBufPlayback->writePos);
     ma_copy_pcm_frames(pOutput, pMemPlayback, pBufPlayback->writePos, pBufPlayback->format, pBufPlayback->channels);
-    pContext->pFFT->update(pBufPlayback);
+    if (pContext->pFFT->update(pBufPlayback))
+        pContext->pGraph->update_activations(pContext->pFFT->bins);
 }
 
 
@@ -43,7 +44,7 @@ void print_audio_status(AudioStatus status) {
     }
 }
 
-Player::Player(float vol, const char* path) {
+Player::Player(int nbins, float vol, const char* path) {
     ma_audio_buffer_config bufferConfig;
     auto deviceConfig = ma_device_config_init(ma_device_type_playback);
     deviceConfig.dataCallback = playback_data_callback;
@@ -58,7 +59,7 @@ Player::Player(float vol, const char* path) {
         (
             pSound = &sound,
             pBuffer = new AudioBuffer(500, pDevice->playback.channels, pDevice->playback.format),
-            pFFT = new FFT(8, 200, pDevice),
+            pFFT = new FFT(nbins, 100, pDevice),
             true) &&
         (status = pFFT->status) == SUCCESS &&
         (status = pBuffer->status) == SUCCESS
@@ -92,7 +93,7 @@ bool Player::is_playing() {
 
 void normalize(const kiss_fft_cpx* pIn, const kiss_fft_cpx* const pIn_, float* pOut) {
     while (pIn != pIn_) {
-        *pOut++ = 20 * sqrt(square(pIn->r) + square(pIn->i));
+        *pOut++ = 20 * std::sqrt(square(pIn->r) + square(pIn->i));
         pIn++;
     }
 }
@@ -103,6 +104,7 @@ void reduce_bins(const float* pFreq, const ma_uint64* pBinSize, double* pBin, in
         *pBin = 0;
         n = *pBinSize++;
         for (j = 0; j < n; j++) *pBin += *pFreq++;
-        *pBin /= nbins;
+        *pBin /= n;
+        *pBin = 20 * std::log10(*pBin + 1e-12);
     }
 }

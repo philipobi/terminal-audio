@@ -16,16 +16,6 @@ int main(int argc, const char** argv)
         return -1;
     }
 
-    auto p = Player(0.1, argv[1]);
-
-    if (p.status == SUCCESS) {
-        p.play();
-    }
-
-    getchar();
-    p.cleanup();
-    return 0;
-
     initscr();
     start_color();
     use_default_colors();
@@ -39,28 +29,24 @@ int main(int argc, const char** argv)
     init_pair(4, COLOR_RED, -1);
     curs_set(0);
 
-    int N = 15;
+    int N = 20;
 
-    graph g = graph(10, N, 5, 5);
+    auto g = graph(10, N, 5, 5);
     int i = 2;
     for (auto& segment : g.segments) {
         segment.set_color(i++);
     }
+    
+    auto p = Player(N, 0.1, argv[1]);
 
-    std::vector<float> activations(15);
+    p.context.pGraph = &g;
 
-    int t = 0;
-    float x;
-    while (true) {
-        for (i = 0; i < N; i++) {
-            x = activations[i] = (1 + sin((i + t) * M_PI / 10)) / 2;
-        }
-        refresh();
-        g.update_activations(activations);
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        t++;
+    if (p.status == SUCCESS) {
+        p.play();
     }
 
+    getchar();
+    p.cleanup();
     endwin();
     return 0;
 }

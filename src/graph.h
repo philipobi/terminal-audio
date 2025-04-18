@@ -20,5 +20,5 @@ public:
     std::vector<segment> segments;
     graph(int height, int width, int y, int x);
     ~graph();
-    void update_activations(const std::vector<float>& activations);
+    void update_activations(const double *activations);
 };

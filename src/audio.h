@@ -3,6 +3,7 @@
 #include <string>
 #include <cmath>
 #include "miniaudio.h"
+#include "graph.h"
 #include "queue.h"
 #include "kiss_fftr.h"
 #define min(a,b) (a)<(b) ? (a) : (b)
@@ -49,16 +50,17 @@ void reduce_bins(const float* pFreq, const ma_uint64* pBinSize, double* pBin, in
 class FFT {
     ma_data_converter converter, * pConverter = NULL;
     AudioBuffer* pBuffer = NULL;
-    ma_uint64 frameSizeFFT, *binSizes;
+    ma_uint64 frameSizeFFT, * binSizes;
     kiss_fftr_cfg FFTcfg;
     kiss_fft_cpx
         * freq_cpx = NULL,
         * freq_cpx_start = NULL,
         * freq_cpx_end = NULL;
     float* freq = NULL;
-    int nbins;
-    double* bins = NULL;
+    double vmax = 1;
 public:
+    int nbins;
+    double* bins = NULL, * pBin;
     AudioStatus status;
 
     FFT(int nbins, ma_uint32 duration_ms, const ma_device* pDevice) :
@@ -106,19 +108,20 @@ public:
 
             auto interp = [](float x) { return pow(x, 4); };
 
+            //TODO: FIX BIN SIZE COMPUTATION
             ma_uint64 pos, pos0 = 0;
             for (int n = 1; n <= nbins; n++)
             {
-                pos = interp(n/nbins) * range;
+                pos = ma_uint64(interp((float)n / nbins) * range);
                 pos = pos == pos0 ? pos + 1 : pos;
                 pos = min(pos, range);
-                binSizes[n-1] = pos - pos0;
+                binSizes[n - 1] = pos - pos0;
                 pos0 = pos;
             }
         }
 
     }
-    void update(AudioBuffer* pBufPlayback) {
+    bool update(AudioBuffer* pBufPlayback) {
         ma_uint64 framesRead = min(pBufPlayback->writePos, frameSizeFFT - pBuffer->writePos);
         void
             * pMemPlayback = pBufPlayback->get_ptr(0),
@@ -126,13 +129,20 @@ public:
         ma_data_converter_process_pcm_frames(pConverter, pMemPlayback, &pBufPlayback->writePos, pMemFFT, &framesRead);
         pBuffer->writePos += framesRead;
 
-        if (pBuffer->writePos != frameSizeFFT) return;
+        if (pBuffer->writePos != frameSizeFFT) return false;
 
-        printf("performing fft\n");
         kiss_fftr(FFTcfg, (const float*)(pBuffer->get_ptr(0)), freq_cpx);
         pBuffer->writePos = 0;
         normalize(freq_cpx_start, freq_cpx_end, freq);
         reduce_bins(freq, binSizes, bins, nbins);
+
+        int i;
+        for (pBin = bins, i = 0; i < nbins; i++, pBin++) {
+            if (*pBin > vmax) vmax = *pBin;
+            *pBin = *pBin > 0 ? *pBin / vmax : 0;
+        };
+
+        return true;
     };
     void cleanup() {
         kiss_fftr_free(FFTcfg);
@@ -148,6 +158,7 @@ public:
 struct ctx {
     ma_engine* pEngine = NULL;
     AudioBuffer* pBufPlayback = NULL;
+    graph *pGraph = NULL;
     FFT* pFFT = NULL;
     Queue<std::string>* pMsgQueue = NULL;
     bool init = false;
@@ -163,10 +174,10 @@ class Player {
     ma_sound sound, * pSound = NULL;
     AudioBuffer* pBuffer = NULL;
     FFT* pFFT = NULL;
-    ctx context;
 public:
+    ctx context;
     enum AudioStatus status;
-    Player(float vol, const char* path);
+    Player(int nbins, float vol, const char* path);
     void play();
     void cleanup();
     bool is_playing();
