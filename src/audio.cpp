@@ -1,54 +1,22 @@
 #include <stdio.h>
-#include <format>
 #include <mutex>
 #include "miniaudio.h"
 #include "audio.h"
 #include "queue.h"
-#define min(a,b) (a)<(b) ? (a) : (b)
+
 
 std::mutex m;
 
-fft::fft(int ms, const ma_device* pDevice) {
-    int frames = ma_calculate_buffer_size_in_frames_from_milliseconds(ms, pDevice->sampleRate);
-    printf("ring buffer size: %i\n", frames);
-    auto config = ma_channel_converter_config_init(
-        pDevice->playback.format,
-        pDevice->playback.channels,
-        NULL,
-        1,
-        NULL,
-        ma_channel_mix_mode_default
-    );
-    if (
-        (status = ma_channel_converter_init(&config, NULL, &converter) == MA_SUCCESS ? SUCCESS : ERR_INIT_CONV) == SUCCESS &&
-        (status = ma_pcm_rb_init(pDevice->playback.format, 1, frames, NULL, NULL, &buf) == MA_SUCCESS ? SUCCESS : ERR_INIT_RBUF) == SUCCESS
-        ) {
-        pConverter = &converter;
-        pBuf = &buf;
-    }
-}
-
-void fft::cleanup() {
-    ma_pcm_rb_uninit(pBuf);
-    ma_channel_converter_uninit(pConverter, NULL);
-}
-
-void fft::copy_frames(void* pFramesIn, ma_uint32 nframes) {
-    ma_pcm_rb_acquire_write(&buf, &nframes, &buf_handle);
-    ma_channel_converter_process_pcm_frames(&converter, buf_handle, pFramesIn, nframes);
-    ma_pcm_rb_commit_write((ma_pcm_rb*)buf_handle, nframes);
-}
-
 void playback_data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
 {
-    ma_uint64 framesRead;
-    std::lock_guard<std::mutex> lock_context(m);
-    ctx* pContext = (ctx*)(pDevice->pUserData);
-    pContext->pMsgQueue->push("callback");
-    AudioBuffer* pBuffer = pContext->pBuffer;
-    ma_engine_read_pcm_frames(pContext->pEngine, pBuffer->pData, min(frameCount, pBuffer->frameCount), &framesRead);
-    ma_copy_pcm_frames(pOutput, pBuffer->pData, framesRead, ma_format_f32, pBuffer->channels);
-    //pContext->pFFT->copy_frames(pBuffer->pData, framesRead);
+    printf("callback\n");
+    auto pContext = (ctx*)(pDevice->pUserData);
+    if (!pContext->init) return;
+    auto pBufPlayback = pContext->pBufPlayback;
+    auto pMemPlayback = pBufPlayback->get_ptr(0);
+    ma_engine_read_pcm_frames(pContext->pEngine, pMemPlayback, min(frameCount, pBufPlayback->frameSize), &pBufPlayback->writePos);
+    ma_copy_pcm_frames(pOutput, pMemPlayback, pBufPlayback->writePos, pBufPlayback->format, pBufPlayback->channels);
+    pContext->pFFT->update(pBufPlayback);
 }
 
 
@@ -66,11 +34,8 @@ void print_audio_status(AudioStatus status) {
     case ERR_INIT_SOUND:
         printf("Failed to initialize sound\n");
         break;
-    case ERR_INIT_PBUF:
-        printf("Failed to initialize playback buffer\n");
-        break;
-    case ERR_INIT_RBUF:
-        printf("Failed to initialize ring buffer\n");
+    case ERR_INIT_BUF:
+        printf("Failed to initialize buffer\n");
         break;
     case ERR_INIT_CONV:
         printf("Failed to initialize converter\n");
@@ -78,8 +43,7 @@ void print_audio_status(AudioStatus status) {
     }
 }
 
-player::player(float vol, const char* path) {
-    std::lock_guard<std::mutex> lock_context(m);
+Player::Player(float vol, const char* path) {
     ma_audio_buffer_config bufferConfig;
     auto deviceConfig = ma_device_config_init(ma_device_type_playback);
     deviceConfig.dataCallback = playback_data_callback;
@@ -94,20 +58,21 @@ player::player(float vol, const char* path) {
         (
             pSound = &sound,
             pBuffer = new AudioBuffer(500, pDevice->playback.channels, pDevice->playback.format),
-            pFFT = new fft(200, pDevice),
+            pFFT = new FFT(8, 200, pDevice),
             true) &&
         (status = pFFT->status) == SUCCESS &&
         (status = pBuffer->status) == SUCCESS
         ) {
         context.pEngine = pEngine;
-        context.pBuffer = pBuffer;
-        context.pMsgQueue = &msg_queue;
+        context.pBufPlayback = pBuffer;
+        //context.pMsgQueue = &msg_queue;
         context.pFFT = pFFT;
+        context.init = true;
     }
     else print_audio_status(status);
 }
 
-void player::cleanup() {
+void Player::cleanup() {
     ma_sound_stop(pSound);
     ma_sound_uninit(pSound);
     ma_engine_uninit(pEngine);
@@ -117,10 +82,27 @@ void player::cleanup() {
     delete pBuffer;
 }
 
-void player::play() {
+void Player::play() {
     ma_sound_start(pSound);
 }
 
-bool player::is_playing() {
+bool Player::is_playing() {
     return ma_sound_is_playing(pSound);
+}
+
+void normalize(const kiss_fft_cpx* pIn, const kiss_fft_cpx* const pIn_, float* pOut) {
+    while (pIn != pIn_) {
+        *pOut++ = 20 * sqrt(square(pIn->r) + square(pIn->i));
+        pIn++;
+    }
+}
+
+void reduce_bins(const float* pFreq, const ma_uint64* pBinSize, double* pBin, int nbins) {
+    ma_uint64 j, n;
+    for (int i = 0; i < nbins; i++, pBin++) {
+        *pBin = 0;
+        n = *pBinSize++;
+        for (j = 0; j < n; j++) *pBin += *pFreq++;
+        *pBin /= nbins;
+    }
 }
