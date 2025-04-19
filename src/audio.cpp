@@ -1,15 +1,13 @@
 #include <stdio.h>
 #include <mutex>
+#include <cmath>
 #include "miniaudio.h"
 #include "audio.h"
 #include "queue.h"
-
-
-std::mutex m;
+#include "partition.h"
 
 void playback_data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
 {
-    //printf("callback\n");
     auto pContext = (ctx*)(pDevice->pUserData);
     if (!pContext->init) return;
     auto pBufPlayback = pContext->pBufPlayback;
@@ -19,7 +17,6 @@ void playback_data_callback(ma_device* pDevice, void* pOutput, const void* pInpu
     if (pContext->pFFT->update(pBufPlayback))
         pContext->pGraph->update_activations(pContext->pFFT->bins);
 }
-
 
 void print_audio_status(AudioStatus status) {
     switch (status) {
@@ -44,6 +41,24 @@ void print_audio_status(AudioStatus status) {
     }
 }
 
+void normalize(const kiss_fft_cpx* pIn, const kiss_fft_cpx* const pIn_, float* pOut) {
+    while (pIn != pIn_) {
+        *pOut++ = std::hypot(pIn->r, pIn->i);
+        pIn++;
+    }
+}
+
+void reduce_bins(const float* pFreq, const ma_uint64* pBinSize, double* pBin, int nbins) {
+    ma_uint64 j, n;
+    for (int i = 0; i < nbins; i++, pBin++) {
+        *pBin = 0;
+        n = *pBinSize++;
+        for (j = 0; j < n; j++) *pBin += *pFreq++;
+        *pBin /= n;
+        *pBin = 20 * std::log10(*pBin + 1e-12);
+    }
+}
+
 Player::Player(int nbins, float vol, const char* path) {
     ma_audio_buffer_config bufferConfig;
     auto deviceConfig = ma_device_config_init(ma_device_type_playback);
@@ -59,7 +74,7 @@ Player::Player(int nbins, float vol, const char* path) {
         (
             pSound = &sound,
             pBuffer = new AudioBuffer(500, pDevice->playback.channels, pDevice->playback.format),
-            pFFT = new FFT(nbins, 100, pDevice),
+            pFFT = new FFT(nbins, FFT_BUFFER_MS, pDevice),
             true) &&
         (status = pFFT->status) == SUCCESS &&
         (status = pBuffer->status) == SUCCESS
@@ -91,20 +106,102 @@ bool Player::is_playing() {
     return ma_sound_is_playing(pSound);
 }
 
-void normalize(const kiss_fft_cpx* pIn, const kiss_fft_cpx* const pIn_, float* pOut) {
-    while (pIn != pIn_) {
-        *pOut++ = 20 * std::sqrt(square(pIn->r) + square(pIn->i));
-        pIn++;
+FFT::FFT(int nbins, ma_uint32 duration_ms, const ma_device* pDevice) :
+    nbins(nbins)
+{
+    auto sampleRate = pDevice->sampleRate;
+    frameSizeFFT = ma_calculate_buffer_size_in_frames_from_milliseconds(duration_ms, pDevice->sampleRate);
+    frameSizeFFT += frameSizeFFT % 2 == 0 ? 0 : 1;
+
+
+    FFTcfg = kiss_fftr_alloc(frameSizeFFT, 0, NULL, NULL);
+    auto config = ma_data_converter_config_init(
+        pDevice->playback.format,
+        ma_format_f32,
+        pDevice->playback.channels,
+        1,
+        sampleRate,
+        sampleRate
+    );
+
+    if (
+        (status = ma_data_converter_init(&config, NULL, &converter) == MA_SUCCESS ? SUCCESS : ERR_INIT_CONV) == SUCCESS &&
+        (
+            pBuffer = new AudioBuffer(
+                2 * frameSizeFFT,
+                1,
+                ma_format_f32
+            ),
+            status = pBuffer->status
+            ) == SUCCESS
+        )
+    {
+        pConverter = &converter;
+        freq_cpx = new kiss_fft_cpx[frameSizeFFT];
+        ma_uint64 i1 = FFT_FREQUENCY_MAX * frameSizeFFT / sampleRate;
+        i1 = i1 < frameSizeFFT ? i1 : frameSizeFFT;
+        ma_uint64 i0 = FFT_FREQUENCY_MIN * frameSizeFFT / sampleRate;
+        i0 = i0 < i1 ? i0 : 0;
+        freq_cpx_start = freq_cpx + i0;
+        freq_cpx_end = freq_cpx + i1;
+        ma_uint64 range = i1 - i0;
+        freq = new float[range];
+        bins = new double[nbins];
+        binSizes = new ma_uint64[nbins];
+
+        partition_exp<ma_uint64>(nbins, range, binSizes);
     }
+    
 }
 
-void reduce_bins(const float* pFreq, const ma_uint64* pBinSize, double* pBin, int nbins) {
-    ma_uint64 j, n;
-    for (int i = 0; i < nbins; i++, pBin++) {
-        *pBin = 0;
-        n = *pBinSize++;
-        for (j = 0; j < n; j++) *pBin += *pFreq++;
-        *pBin /= n;
-        *pBin = 20 * std::log10(*pBin + 1e-12);
-    }
+void FFT::cleanup() {
+    kiss_fftr_free(FFTcfg);
+    ma_data_converter_uninit(pConverter, NULL);
+    delete pBuffer;
+    delete[] freq_cpx;
+    delete[] freq;
+    delete[] bins;
+    delete[] binSizes;
+}
+
+bool FFT::update(AudioBuffer* pBufPlayback) {
+    ma_uint64 framesRead = min(pBufPlayback->writePos, frameSizeFFT - pBuffer->writePos);
+    void
+        * pMemPlayback = pBufPlayback->get_ptr(0),
+        * pMemFFT = pBuffer->get_ptr(pBuffer->writePos);
+    ma_data_converter_process_pcm_frames(pConverter, pMemPlayback, &pBufPlayback->writePos, pMemFFT, &framesRead);
+    pBuffer->writePos += framesRead;
+
+    if (pBuffer->writePos != frameSizeFFT) return false;
+
+    kiss_fftr(FFTcfg, (const float*)(pBuffer->get_ptr(0)), freq_cpx);
+    pBuffer->writePos = 0;
+    normalize(freq_cpx_start, freq_cpx_end, freq);
+    reduce_bins(freq, binSizes, bins, nbins);
+
+    int i;
+    for (pBin = bins, i = 0; i < nbins; i++, pBin++) {
+        if (*pBin > vmax) vmax = *pBin;
+        *pBin = *pBin > 0 ? *pBin / vmax : 0;
+    };
+
+    return true;
+};
+
+AudioBuffer::AudioBuffer(ma_uint64 frameSize, ma_uint32 channels, ma_format format) :
+    format(format),
+    frameSize(frameSize),
+    writePos(0),
+    readPos(0),
+    channels(channels),
+    bps(ma_get_bytes_per_sample(format)),
+    buf((void* const)malloc(frameSize* channels* bps))
+{
+    status = buf == NULL ? ERR_INIT_BUF : SUCCESS;
+}
+
+AudioBuffer::~AudioBuffer() { free(buf); }
+
+void* AudioBuffer::get_ptr(ma_uint64 framePos) {
+    return (char*)buf + framePos * channels * bps;
 }

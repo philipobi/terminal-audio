@@ -24,14 +24,11 @@ int main(int argc, const char** argv)
     refresh();
     init_pair(1, COLOR_WHITE, -1);
     attron(COLOR_PAIR(1));
-    init_pair(2, COLOR_GREEN, -1);
-    init_pair(3, COLOR_YELLOW, -1);
-    init_pair(4, COLOR_RED, -1);
     curs_set(0);
 
-    int N = 20;
+    int N = 15;
 
-    auto g = graph(10, N, 5, 5);
+    auto g = Graph(N, 15, 2, 2, 5, 5);
     int i = 2;
     for (auto& segment : g.segments) {
         segment.set_color(i++);
