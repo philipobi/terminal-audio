@@ -26,6 +26,8 @@ void normalize(const kiss_fft_cpx* pIn, const kiss_fft_cpx* const pIn_, float* p
 
 void reduce_bins(const float* pFreq, const ma_uint64* pBinSize, double* pBin, int nbins);
 
+void apply_windowfunc(float* pData, ma_uint64 N, float (*func)(ma_uint64, ma_uint64));
+
 class AudioBuffer {
     ma_uint32 bps;
     void* const buf;

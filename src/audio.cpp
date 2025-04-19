@@ -6,6 +6,14 @@
 #include "queue.h"
 #include "partition.h"
 
+float
+a0 = 0.53836,
+a1 = 1 - a0;
+
+float hamming(ma_uint64 n, ma_uint64 N) {
+    return a0 - a1 * std::cos(2 * M_PI * double(n) / N);
+}
+
 void playback_data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
 {
     auto pContext = (ctx*)(pDevice->pUserData);
@@ -151,7 +159,7 @@ FFT::FFT(int nbins, ma_uint32 duration_ms, const ma_device* pDevice) :
 
         partition_exp<ma_uint64>(nbins, range, binSizes);
     }
-    
+
 }
 
 void FFT::cleanup() {
@@ -174,6 +182,7 @@ bool FFT::update(AudioBuffer* pBufPlayback) {
 
     if (pBuffer->writePos != frameSizeFFT) return false;
 
+    apply_windowfunc((float*)pBuffer->get_ptr(0), frameSizeFFT, &hamming);
     kiss_fftr(FFTcfg, (const float*)(pBuffer->get_ptr(0)), freq_cpx);
     pBuffer->writePos = 0;
     normalize(freq_cpx_start, freq_cpx_end, freq);
@@ -204,4 +213,9 @@ AudioBuffer::~AudioBuffer() { free(buf); }
 
 void* AudioBuffer::get_ptr(ma_uint64 framePos) {
     return (char*)buf + framePos * channels * bps;
+}
+
+void apply_windowfunc(float* pData, ma_uint64 N, float (*func)(ma_uint64, ma_uint64)) {
+    ma_uint64 n;
+    for (n = 0; n < N; n++) *pData++ *= (*func)(n, N);
 }
