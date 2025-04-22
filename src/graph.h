@@ -23,17 +23,20 @@ class Graph {
         width,
         height,
         y,
-        x,
-        *activations = NULL;
+        x;
+    double *amplitudes = NULL;
     int nsegments = 3;
     float segment_ratios[3] = { 0.2, 0.1, 0.7 };
-    float activation_decay = 0.5;
     int segment_heights[3];
-    Segment *pFooter = NULL;
-    Segment *pLabels = NULL;
+    float amplitude_decay = 0.8;
+    Segment 
+        *pFooter = NULL,
+        *pLabels = NULL,
+        *pRaw = NULL,
+        *pNorm = NULL;
 public:
     std::vector<Segment> segments;
     Graph(int nbars, int bar_height, int bar_width, int bar_margin, int y, int x);
     ~Graph();
-    void update_activations(const double* activations);
+    void update(const double* amplitudes_raw);
 };

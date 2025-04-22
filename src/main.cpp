@@ -26,18 +26,33 @@ int main(int argc, const char** argv)
     attron(COLOR_PAIR(1));
     curs_set(0);
 
-    int N = N_BINS;
-
-    auto g = Graph(N, 20, 2, 2, 5, 5);
-    auto p = Player(N, .3, argv[1]);
+    auto g = Graph(N_BINS, 20, 5, 4, 5, 5);
+    auto p = Player(argv[1]);
 
     p.context.pGraph = &g;
 
+    auto p_win = g.segments[0].p_win;
+
     if (p.status == SUCCESS) {
         p.play();
+        char c;
+        bool run = true;
+        while (run) {
+            c = wgetch(p_win);
+            switch (c)
+            {
+            case 'p':
+                p.play();
+                break;
+            case 'q':
+                run = false;
+                break;
+            default:
+                break;
+            }
+        }
     }
 
-    getchar();
     p.cleanup();
     endwin();
     return 0;

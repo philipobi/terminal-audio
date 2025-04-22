@@ -27,12 +27,12 @@ Graph::Graph(int nbars, int bar_height, int bar_width, int bar_margin, int y, in
     width(nbars* bar_width + (nbars + 1) * bar_margin),
     y(y),
     x(x),
-    activations(new int[nbars])
+    amplitudes(new double[nbars] { 0 })
 {
     int i, j;
-    
+
     partition_fractions<int>(nsegments, segment_ratios, bar_height, segment_heights);
-    
+
     segments.reserve(3);
     int y_off = bar_margin;
     for (i = 0; i < nsegments; i++) {
@@ -44,23 +44,26 @@ Graph::Graph(int nbars, int bar_height, int bar_width, int bar_margin, int y, in
         );
         y_off += segment_heights[i];
     }
-    
-    pFooter = new Segment(
-        1,
-        width - 2 * bar_margin,
-        y + y_off,
-        x + bar_margin
-    );
-    pLabels = new Segment(
-        1,
-        width - 2 * bar_margin,
-        y + y_off + 1,
-        x + bar_margin
-    );
-    
-    const char *strings[N_BINS] = BIN_LABELS;
-    for(i = 0; i < N_BINS; i++){
-        mvwprintw(pLabels->p_win, 0, i*(bar_margin+bar_width), strings[i]);
+
+    Segment** pSegments[4] = {
+        &pFooter,
+        &pLabels,
+        &pRaw,
+        &pNorm
+    };
+    for (i = 0; i < 4; i++) {
+        *pSegments[i] = new Segment(
+            1,
+            width - 2 * bar_margin,
+            y + y_off,
+            x + bar_margin
+        );
+        y_off++;
+    }
+
+    const char* strings[N_BINS] = BIN_LABELS;
+    for (i = 0; i < N_BINS; i++) {
+        mvwprintw(pLabels->p_win, 0, i * (bar_margin + bar_width), strings[i]);
     }
 
 
@@ -72,22 +75,30 @@ Graph::Graph(int nbars, int bar_height, int bar_width, int bar_margin, int y, in
     for (auto& segment : segments) segment.set_color(i++);
     pFooter->set_color(2);
     for (i = 0; i < nbars; i++)
-        for(j = 0; j < bar_width; j++)
+        for (j = 0; j < bar_width; j++)
             pFooter->place_n(i * (bar_width + bar_margin) + j, 1);
+
     wrefresh(pFooter->p_win);
     wrefresh(pLabels->p_win);
 }
 Graph::~Graph() {
     for (auto& segment : segments) delwin(segment.p_win);
     delwin(pFooter->p_win);
-    delete[] activations;
+    delete[] amplitudes;
 }
 
-void Graph::update_activations(const double* pAct_update) {
+void Graph::update(const double* amplitudes_raw) {
+    double* pAmp;
+    const double* pAmp_raw;
     for (auto& segment : segments) segment.clear();
-    int n, i, j, * pAct, a;
-    for (i = 0, pAct = activations; i < nbars; i++, pAct++) {
-        a = *pAct = max(round(*pAct_update++ * height), round(activation_decay * *pAct));
+    int n, i, j, a;
+    for (
+        i = 0, pAmp = amplitudes, pAmp_raw = amplitudes_raw;
+        i < nbars;
+        i++, pAmp++, pAmp_raw++)
+    {
+        *pAmp = max(*pAmp_raw / 80 + 1, *pAmp * amplitude_decay);
+        a = round(max(0, min(*pAmp, 1)) * bar_height);
         for (auto& segment : segments) {
             n = min(a, segment.height);
             for (j = 0; j < bar_width; j++) {
@@ -97,5 +108,15 @@ void Graph::update_activations(const double* pAct_update) {
             if (a == 0) break;
         }
     }
+    for (
+        i = 0, pAmp = amplitudes, pAmp_raw = amplitudes_raw;
+        i < N_BINS;
+        i++, pAmp++, pAmp_raw++)
+    {
+        mvwprintw(pNorm->p_win, 0, i * (bar_margin + bar_width), "%.2f", *pAmp);
+        mvwprintw(pRaw->p_win, 0, i * (bar_margin + bar_width), "%.2f", *pAmp_raw);
+    }
+    wrefresh(pRaw->p_win);
+    wrefresh(pNorm->p_win);
     for (auto& segment : segments) wrefresh(segment.p_win);
 }
