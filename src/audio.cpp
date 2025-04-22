@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <mutex>
 #include <cmath>
+#include <limits>
 #include "miniaudio.h"
 #include "audio.h"
 #include "queue.h"
@@ -10,8 +11,15 @@ float
 a0 = 0.53836,
 a1 = 1 - a0;
 
-float hamming(ma_uint64 n, ma_uint64 N) {
+
+double hamming(ma_uint64 n, ma_uint64 N) {
     return a0 - a1 * std::cos(2 * M_PI * double(n) / N);
+}
+
+template <class T>
+void apply_windowfunc(T* pData, ma_uint64 N, double (*func)(ma_uint64, ma_uint64)){
+    ma_uint64 n;
+    for (n = 0; n < N; n++, pData++) *pData *= (*func)(n, N);
 }
 
 void playback_data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
@@ -23,7 +31,7 @@ void playback_data_callback(ma_device* pDevice, void* pOutput, const void* pInpu
     ma_engine_read_pcm_frames(pContext->pEngine, pMemPlayback, min(frameCount, pBufPlayback->frameSize), &pBufPlayback->writePos);
     ma_copy_pcm_frames(pOutput, pMemPlayback, pBufPlayback->writePos, pBufPlayback->format, pBufPlayback->channels);
     if (pContext->pFFT->update(pBufPlayback))
-        pContext->pGraph->update_activations(pContext->pFFT->bins);
+        pContext->pGraph->update_activations(pContext->pFFT->magnitudes);
 }
 
 void print_audio_status(AudioStatus status) {
@@ -49,24 +57,6 @@ void print_audio_status(AudioStatus status) {
     }
 }
 
-void normalize(const kiss_fft_cpx* pIn, const kiss_fft_cpx* const pIn_, float* pOut) {
-    while (pIn != pIn_) {
-        *pOut++ = std::hypot(pIn->r, pIn->i);
-        pIn++;
-    }
-}
-
-void reduce_bins(const float* pFreq, const ma_uint64* pBinSize, double* pBin, int nbins) {
-    ma_uint64 j, n;
-    for (int i = 0; i < nbins; i++, pBin++) {
-        *pBin = 0;
-        n = *pBinSize++;
-        for (j = 0; j < n; j++) *pBin += *pFreq++;
-        *pBin /= n;
-        *pBin = 20 * std::log10(*pBin + 1e-12);
-    }
-}
-
 Player::Player(int nbins, float vol, const char* path) {
     ma_audio_buffer_config bufferConfig;
     auto deviceConfig = ma_device_config_init(ma_device_type_playback);
@@ -82,7 +72,7 @@ Player::Player(int nbins, float vol, const char* path) {
         (
             pSound = &sound,
             pBuffer = new AudioBuffer(500, pDevice->playback.channels, pDevice->playback.format),
-            pFFT = new FFT(nbins, FFT_BUFFER_MS, pDevice),
+            pFFT = new FFT(FFT_BUFFER_MS, pDevice),
             true) &&
         (status = pFFT->status) == SUCCESS &&
         (status = pBuffer->status) == SUCCESS
@@ -114,13 +104,13 @@ bool Player::is_playing() {
     return ma_sound_is_playing(pSound);
 }
 
-FFT::FFT(int nbins, ma_uint32 duration_ms, const ma_device* pDevice) :
-    nbins(nbins)
+FFT::FFT(ma_uint32 duration_ms, const ma_device* pDevice)
 {
     auto sampleRate = pDevice->sampleRate;
     frameSizeFFT = ma_calculate_buffer_size_in_frames_from_milliseconds(duration_ms, pDevice->sampleRate);
-    frameSizeFFT += frameSizeFFT % 2 == 0 ? 0 : 1;
-
+    if (frameSizeFFT % 2 == 1) frameSizeFFT += 1;
+    windowSum = 0;
+    for(ma_uint64 n = 0; n < frameSizeFFT; n++) windowSum += hamming(n, frameSizeFFT);
 
     FFTcfg = kiss_fftr_alloc(frameSizeFFT, 0, NULL, NULL);
     auto config = ma_data_converter_config_init(
@@ -146,18 +136,17 @@ FFT::FFT(int nbins, ma_uint32 duration_ms, const ma_device* pDevice) :
     {
         pConverter = &converter;
         freq_cpx = new kiss_fft_cpx[frameSizeFFT];
-        ma_uint64 i1 = FFT_FREQUENCY_MAX * frameSizeFFT / sampleRate;
-        i1 = i1 < frameSizeFFT ? i1 : frameSizeFFT;
-        ma_uint64 i0 = FFT_FREQUENCY_MIN * frameSizeFFT / sampleRate;
-        i0 = i0 < i1 ? i0 : 0;
-        freq_cpx_start = freq_cpx + i0;
-        freq_cpx_end = freq_cpx + i1;
-        ma_uint64 range = i1 - i0;
-        freq = new float[range];
-        bins = new double[nbins];
-        binSizes = new ma_uint64[nbins];
+        kiss_fft_cpx
+            ** ppFreq,
+            * pEnd = freq_cpx + frameSizeFFT / 2;
+        int i;
+        for (i = 0, ppFreq = frequencyPtrs; i < N_BINS + 1; i++, ppFreq++) {
+            *ppFreq = freq_cpx + frequencies[i] * frameSizeFFT / sampleRate;
+            if (*ppFreq > pEnd) *ppFreq = pEnd;
 
-        partition_exp<ma_uint64>(nbins, range, binSizes);
+        vmin = std::numeric_limits<double>::infinity();
+        vmax = -std::numeric_limits<double>::infinity();
+        }
     }
 
 }
@@ -167,9 +156,26 @@ void FFT::cleanup() {
     ma_data_converter_uninit(pConverter, NULL);
     delete pBuffer;
     delete[] freq_cpx;
-    delete[] freq;
-    delete[] bins;
-    delete[] binSizes;
+}
+
+void FFT::reduce_spectrum() {
+    int i, n;
+    double sum;
+    kiss_fft_cpx* pFreq0, * pFreq1;
+    for (i = 0, pMag = magnitudes; i < N_BINS; i++, pMag++) {
+        pFreq0 = frequencyPtrs[i];
+        pFreq1 = frequencyPtrs[i + 1];
+        n = pFreq1 - pFreq0;
+        sum = 0;
+        while (pFreq0 < pFreq1) {
+            sum += 2 * std::hypot(double(pFreq0->r), double(pFreq0->i)) / windowSum;
+            pFreq0++;
+        }
+        if (n != 0) sum /= n;
+        *pMag = 20 * std::log10(sum + 1e-12);
+        if(*pMag < vmin) vmin = *pMag;
+        if(*pMag > vmax) vmax = *pMag;
+    }
 }
 
 bool FFT::update(AudioBuffer* pBufPlayback) {
@@ -182,18 +188,16 @@ bool FFT::update(AudioBuffer* pBufPlayback) {
 
     if (pBuffer->writePos != frameSizeFFT) return false;
 
-    apply_windowfunc((float*)pBuffer->get_ptr(0), frameSizeFFT, &hamming);
-    kiss_fftr(FFTcfg, (const float*)(pBuffer->get_ptr(0)), freq_cpx);
+    apply_windowfunc<float>((float*)pBuffer->get_ptr(0), frameSizeFFT, &hamming);
+    kiss_fftr(FFTcfg, (const kiss_fft_scalar*)(pBuffer->get_ptr(0)), freq_cpx);
     pBuffer->writePos = 0;
-    normalize(freq_cpx_start, freq_cpx_end, freq);
-    reduce_bins(freq, binSizes, bins, nbins);
+    reduce_spectrum();
 
     int i;
-    for (pBin = bins, i = 0; i < nbins; i++, pBin++) {
-        if (*pBin > vmax) vmax = *pBin;
-        *pBin = *pBin > 0 ? *pBin / vmax : 0;
-    };
-
+    double d = vmax - vmin;
+    for (i = 0, pMag = magnitudes; i < N_BINS; i++, pMag++) {
+        *pMag = (*pMag - vmin)/d;
+    }
     return true;
 };
 
@@ -213,9 +217,4 @@ AudioBuffer::~AudioBuffer() { free(buf); }
 
 void* AudioBuffer::get_ptr(ma_uint64 framePos) {
     return (char*)buf + framePos * channels * bps;
-}
-
-void apply_windowfunc(float* pData, ma_uint64 N, float (*func)(ma_uint64, ma_uint64)) {
-    ma_uint64 n;
-    for (n = 0; n < N; n++) *pData++ *= (*func)(n, N);
 }

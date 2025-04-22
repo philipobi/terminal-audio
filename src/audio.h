@@ -8,8 +8,9 @@
 #include "kiss_fftr.h"
 #include "utils.h"
 #define FFT_BUFFER_MS 100
-#define FFT_FREQUENCY_MAX 8000
-#define FFT_FREQUENCY_MIN 20
+#define BIN_FREQUENCIES { 15, 30, 60, 125, 250, 500, 1000, 2000, 4000, 8000, 16000 }
+#define BIN_LABELS { "15", "30", "60", "1h", "2h", "5h", "1k", "2k", "4k", "8k" }
+#define N_BINS 10
 
 enum AudioStatus {
     SUCCESS,
@@ -21,12 +22,6 @@ enum AudioStatus {
 };
 
 void print_audio_status(AudioStatus status);
-
-void normalize(const kiss_fft_cpx* pIn, const kiss_fft_cpx* const pIn_, float* pOut);
-
-void reduce_bins(const float* pFreq, const ma_uint64* pBinSize, double* pBin, int nbins);
-
-void apply_windowfunc(float* pData, ma_uint64 N, float (*func)(ma_uint64, ma_uint64));
 
 class AudioBuffer {
     ma_uint32 bps;
@@ -41,24 +36,23 @@ public:
 };
 
 class FFT {
+    int frequencies[N_BINS + 1] = BIN_FREQUENCIES;
+    kiss_fft_cpx* frequencyPtrs[N_BINS + 1];
     ma_data_converter converter, * pConverter = NULL;
     AudioBuffer* pBuffer = NULL;
-    ma_uint64 frameSizeFFT, * binSizes;
+    ma_uint64 frameSizeFFT;
     kiss_fftr_cfg FFTcfg;
-    kiss_fft_cpx
-        * freq_cpx = NULL,
-        * freq_cpx_start = NULL,
-        * freq_cpx_end = NULL;
-    float* freq = NULL;
-    double vmax = 1;
+    kiss_fft_cpx* freq_cpx = NULL;
+    double windowSum, vmin, vmax;
+    double* pMag;
 public:
-    int nbins;
-    double* bins = NULL, * pBin;
+    double magnitudes[N_BINS] = { 0 };
     AudioStatus status;
 
-    FFT(int nbins, ma_uint32 duration_ms, const ma_device* pDevice);
+    FFT(ma_uint32 duration_ms, const ma_device* pDevice);
     bool update(AudioBuffer* pBufPlayback);
     void cleanup();
+    void reduce_spectrum();
 };
 
 struct ctx {

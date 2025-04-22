@@ -4,6 +4,7 @@
 #include "graph.h"
 #include "utils.h"
 #include "partition.h"
+#include "audio.h"
 
 Segment::Segment(int height, int width, int y, int x) : height(height), width(width), y(y), x(x) {
     //try shared_ptr
@@ -43,12 +44,25 @@ Graph::Graph(int nbars, int bar_height, int bar_width, int bar_margin, int y, in
         );
         y_off += segment_heights[i];
     }
+    
     pFooter = new Segment(
         1,
         width - 2 * bar_margin,
         y + y_off,
         x + bar_margin
     );
+    pLabels = new Segment(
+        1,
+        width - 2 * bar_margin,
+        y + y_off + 1,
+        x + bar_margin
+    );
+    
+    const char *strings[N_BINS] = BIN_LABELS;
+    for(i = 0; i < N_BINS; i++){
+        mvwprintw(pLabels->p_win, 0, i*(bar_margin+bar_width), strings[i]);
+    }
+
 
     init_pair(2, COLOR_GREEN, -1);
     init_pair(3, COLOR_YELLOW, -1);
@@ -61,6 +75,7 @@ Graph::Graph(int nbars, int bar_height, int bar_width, int bar_margin, int y, in
         for(j = 0; j < bar_width; j++)
             pFooter->place_n(i * (bar_width + bar_margin) + j, 1);
     wrefresh(pFooter->p_win);
+    wrefresh(pLabels->p_win);
 }
 Graph::~Graph() {
     for (auto& segment : segments) delwin(segment.p_win);

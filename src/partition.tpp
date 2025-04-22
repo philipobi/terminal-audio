@@ -1,6 +1,7 @@
 #include <cmath>
 #include "utils.h"
 #include "partition.h"
+#include "stdio.h"
 
 template <class num>
 void correct_partitions(int npart, num N, num sum, num* results){
@@ -26,8 +27,8 @@ template <class num>
 void partition_fractions(int npart, float* pFraction, num N, num* results) {
     int i;
     num sum = 0, * pResult;
-    for (i = 0, pResult = results; i < npart; i++) {
-        sum += (*pResult++ = max(1, std::round(*pFraction++ * N)));
+    for (i = 0, pResult = results; i < npart; i++, pResult++, pFraction++) {
+        sum += (*pResult = max(1, std::round(*pFraction * N)));
     }
     correct_partitions(npart, N, sum, results);
 }

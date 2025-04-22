@@ -26,15 +26,10 @@ int main(int argc, const char** argv)
     attron(COLOR_PAIR(1));
     curs_set(0);
 
-    int N = 15;
+    int N = N_BINS;
 
-    auto g = Graph(N, 15, 2, 2, 5, 5);
-    int i = 2;
-    for (auto& segment : g.segments) {
-        segment.set_color(i++);
-    }
-    
-    auto p = Player(N, 0.1, argv[1]);
+    auto g = Graph(N, 20, 2, 2, 5, 5);
+    auto p = Player(N, .3, argv[1]);
 
     p.context.pGraph = &g;
 

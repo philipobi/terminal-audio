@@ -30,6 +30,7 @@ class Graph {
     float activation_decay = 0.5;
     int segment_heights[3];
     Segment *pFooter = NULL;
+    Segment *pLabels = NULL;
 public:
     std::vector<Segment> segments;
     Graph(int nbars, int bar_height, int bar_width, int bar_margin, int y, int x);
