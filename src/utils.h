@@ -1,9 +1,18 @@
 #pragma once
-#include <mutex>
-
-#define min(a,b) (a)<(b) ? (a) : (b)
-#define max(a,b) (a)>(b) ? (a) : (b)
-#define square(a) (a)*(a)
 #define PLAYER_DEBUG false
 
+#include "miniaudio.h"
+struct PlaybackInfo
+{
+    bool
+        playing = false,
+        end = true;
+    ma_uint64
+        sampleRate,
+        audioFrameCursor,
+        audioFrameSize,
+        audioDuration;
+};
+
+#include <mutex>
 extern std::mutex syncPlayback;

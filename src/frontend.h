@@ -1,12 +1,15 @@
 #pragma once
 #include <ncurses.h>
 #include <vector>
-#include "playbackinfo.h"
+#include "utils.h"
+#include "config.h"
 
-class Window {
+class Window
+{
     int width, y, x;
+
 public:
-    WINDOW* p_win;
+    WINDOW *p_win;
     int height;
     Window(int height, int width, int y, int x);
 
@@ -16,7 +19,8 @@ public:
     void stack_n_horizontal(int y, int n, char c = '#', int offset = 0);
 };
 
-class UI {
+class UI
+{
     int
         nbars,
         bar_height,
@@ -27,25 +31,26 @@ class UI {
         height,
         y,
         x;
-    double* amplitudes = NULL;
+    double *amplitudes = NULL;
     int nsegments = 3;
-    float segment_ratios[3] = { 0.2, 0.1, 0.7 };
+    float segment_ratios[3] = {0.2, 0.1, 0.7};
     int segment_heights[3];
     float amplitude_decay = 0.8;
-    bool 
+    bool
         playerInit = false,
         playerPlaying = false;
 
     Window
-        * pFooter = NULL,
-        * pLabels = NULL,
-        * pRaw = NULL,
-        * pNorm = NULL,
-        * pProgressBar = NULL;
+        *pFooter = NULL,
+        *pLabels = NULL,
+        *pRaw = NULL,
+        *pNorm = NULL,
+        *pProgressBar = NULL;
+
 public:
     std::vector<Window> barSegments;
     UI(int nbars, int bar_height, int bar_width, int bar_margin, int y, int x);
     ~UI();
-    void update_amplitudes(const double* amplitudes_raw);
-    void update_player(const PlaybackInfo* pPlaybackInfo);
+    void update_amplitudes(const double *amplitudes_raw);
+    void update_player(const PlaybackInfo *pPlaybackInfo);
 };

@@ -5,14 +5,14 @@
 #include <stdio.h>
 #include "frontend.h"
 #include "audio.h"
-#include "util.h"
+#include "utils.h"
 
 std::mutex syncPlayback;
 
 void move_playback_cursor(ctx *pContext, ma_uint64 frameCount, bool forward){
     std::lock_guard<std::mutex> lck(syncPlayback);
     if(forward){
-        frameCount = min(
+        frameCount = std::min(
             pContext->playbackInfo.audioFrameCursor + frameCount,
             pContext->playbackInfo.audioFrameSize - 1
         );

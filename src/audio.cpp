@@ -4,7 +4,6 @@
 #include <mutex>
 #include "miniaudio.h"
 #include "audio.h"
-#include "partition.h"
 #include "utils.h"
 
 float
@@ -216,7 +215,7 @@ void FFT::reduce_spectrum() {
 }
 
 bool FFT::update(AudioBuffer* pBufPlayback) {
-    frameCountIn = min(pBufPlayback->writePos, frameSizeFFT - pBuffer->writePos);
+    frameCountIn = std::min(pBufPlayback->writePos, frameSizeFFT - pBuffer->writePos);
     frameCountOut = frameCountIn;
     ptr0 = pBufPlayback->ptr;
 
