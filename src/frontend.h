@@ -6,11 +6,11 @@
 
 class Window
 {
-    int width, y, x;
+    int y, x;
 
 public:
     WINDOW *p_win;
-    int height;
+    int width, height;
     Window(int height, int width, int y, int x);
 
     void set_color(int i);
@@ -26,7 +26,8 @@ class UI
         bar_height,
         bar_width,
         bar_margin,
-        player_width = 15,
+        player_width = 20,
+        window_margin = 2,
         width,
         height,
         y,
@@ -42,10 +43,9 @@ class UI
 
     Window
         *pFooter = NULL,
-        *pLabels = NULL,
-        *pRaw = NULL,
-        *pNorm = NULL,
-        *pProgressBar = NULL;
+        *pProgressBar = NULL,
+        *pPlaybackStatus = NULL,
+        *pContainer = NULL;
 
 public:
     std::vector<Window> barSegments;

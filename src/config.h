@@ -1,5 +1,6 @@
 #pragma once
 #include "miniaudio.h"
+#define APP_DEBUG false
 
 #define BIN_FREQUENCIES {30, 60, 125, 250, 500, 1000, 2000, 4000, 8000, 16000}
 #define BIN_LABELS {"30", "60", "1h", "2h", "5h", "1k", "2k", "4k", "8k"}
