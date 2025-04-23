@@ -33,7 +33,7 @@ add_library(miniaudio
 
 add_executable(terminal-audio 
     src/main.cpp
-    src/graph.cpp
+    src/frontend.cpp
     src/audio.cpp
 )
 

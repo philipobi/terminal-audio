@@ -1,11 +1,11 @@
 #include <stdio.h>
-#include <mutex>
 #include <cmath>
 #include <limits>
+#include <mutex>
 #include "miniaudio.h"
 #include "audio.h"
-#include "queue.h"
 #include "partition.h"
+#include "utils.h"
 
 float
 a0 = 0.53836,
@@ -23,16 +23,22 @@ void apply_windowfunc(T* pData, ma_uint64 N, double (*func)(ma_uint64, ma_uint64
 
 void playback_data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
 {
+    std::lock_guard<std::mutex> lck(syncPlayback);
     auto pCtx = (ctx*)(pDevice->pUserData);
-    if (!pCtx->playing || !pCtx->init) {
-        return;
-    }
+    auto pPlaybackInfo = &pCtx->playbackInfo;
+    if (!pPlaybackInfo->playing) return;
 
     auto pBuf = pCtx->pBufPlayback;
     frameCount = pBuf->request_write(frameCount);
 
     pBuf->seek(0);
-
+    
+    
+    ma_decoder_get_cursor_in_pcm_frames(
+        pCtx->pDecoder, 
+        &pPlaybackInfo->audioFrameCursor
+    );
+    
     // read pcm frames into buffer
     if (
         ma_decoder_read_pcm_frames(
@@ -41,10 +47,16 @@ void playback_data_callback(ma_device* pDevice, void* pOutput, const void* pInpu
             frameCount,
             &pBuf->writePos
         ) == MA_AT_END
-        ) {
-        pCtx->playing = false;
-        pCtx->end = true;
+    ) {
+        pPlaybackInfo->playing = false;
+        pPlaybackInfo->end = true;
     }
+    // update cursor position
+    ma_decoder_get_cursor_in_pcm_frames(
+        pCtx->pDecoder, 
+        &pPlaybackInfo->audioFrameCursor
+    );
+    pCtx->pUI->update_player(pPlaybackInfo);
 
     // write pcm frames to device
     ma_copy_pcm_frames(
@@ -57,7 +69,7 @@ void playback_data_callback(ma_device* pDevice, void* pOutput, const void* pInpu
 
     // update FFT and graph using new frames
     if (pCtx->pFFT->update(pBuf))
-        pCtx->pGraph->update(
+        pCtx->pUI->update_amplitudes(
             pCtx->pFFT->magnitudes_raw
         );
 }
@@ -228,25 +240,22 @@ bool FFT::update(AudioBuffer* pBufPlayback) {
     kiss_fftr(FFTcfg, (const kiss_fft_scalar*)(pBuffer->ptr), freq_cpx);
     pBuffer->writePos = 0;
     reduce_spectrum();
-    
+
     return true;
 }
 
 
-Player::Player(const char* path) {
+Player::Player(ctx* pContext) :
+    pContext(pContext),
+    pPlaybackInfo(&pContext->playbackInfo)
+{
     auto deviceConfig = ma_device_config_init(ma_device_type_playback);
     deviceConfig.dataCallback = playback_data_callback;
-    deviceConfig.pUserData = &context;
-    ma_decoder_config decoderConfig;
+    deviceConfig.pUserData = pContext;
 
     if (
         (status = ma_device_init(NULL, &deviceConfig, &device) == MA_SUCCESS ? SUCCESS : ERR_INIT_DEVICE) == SUCCESS &&
         (
-            decoderConfig = ma_decoder_config_init(
-                device.playback.format,
-                device.playback.channels,
-                device.sampleRate
-            ),
             pBuffer = new AudioBuffer(
                 0,
                 device.playback.channels,
@@ -259,22 +268,19 @@ Player::Player(const char* path) {
                 device.sampleRate
             ),
             true) &&
-        (status = ma_decoder_init_file(path, &decoderConfig, &decoder) == MA_SUCCESS ? SUCCESS : ERR_INIT_DECODER) == SUCCESS &&
         (status = pBuffer->status) == SUCCESS &&
         (status = pFFT->status) == SUCCESS
         ) {
         pDevice = &device;
-        pDecoder = &decoder;
-        context.pDecoder = pDecoder;
-        context.pBufPlayback = pBuffer;
-        context.pFFT = pFFT;
-        context.init = true;
+        pContext->pBufPlayback = pBuffer;
+        pContext->pFFT = pFFT;
         ma_device_start(pDevice);
     }
     else print_audio_status(status);
 }
 
 void Player::cleanup() {
+    std::lock_guard<std::mutex> lck(syncPlayback);
     ma_device_uninit(pDevice);
     ma_decoder_uninit(pDecoder);
     if (pFFT) pFFT->cleanup();
@@ -282,16 +288,32 @@ void Player::cleanup() {
     delete pBuffer;
 }
 
-void Player::play() {
-    if (context.end) {
+void Player::play(){
+    if (pPlaybackInfo->end) {
         ma_decoder_seek_to_pcm_frame(pDecoder, 0);
-        context.end = false;
-        context.playing = true;
-        return;
+        pPlaybackInfo->audioFrameCursor = 0;
+        pPlaybackInfo->end = false;
     }
-    context.playing = !context.playing;
+    pPlaybackInfo->playing = true;
 }
 
-bool Player::is_playing() {
-    return context.playing;
+void Player::pause(){
+    pPlaybackInfo->playing = false;
+}
+
+AudioStatus Player::load_audio(const char* filePath) {
+    auto decoderConfig = ma_decoder_config_init(
+        device.playback.format,
+        device.playback.channels,
+        device.sampleRate
+    );
+    if ((status = ma_decoder_init_file(filePath, &decoderConfig, &decoder) == MA_SUCCESS ? SUCCESS : ERR_INIT_DECODER) == SUCCESS)
+    {
+        pDecoder = &decoder;
+        pContext->pDecoder = pDecoder;
+        ma_decoder_get_length_in_pcm_frames(pDecoder, &pPlaybackInfo->audioFrameSize);
+        pPlaybackInfo->sampleRate = pDecoder->outputSampleRate;
+        pPlaybackInfo->audioDuration = pPlaybackInfo->audioFrameSize / pPlaybackInfo->sampleRate;
+    }
+    return status;
 }

@@ -1,12 +1,11 @@
 #pragma once
 #include <stdlib.h>
-#include <string>
 #include <cmath>
 #include "miniaudio.h"
-#include "graph.h"
-#include "queue.h"
+#include "frontend.h"
 #include "kiss_fftr.h"
 #include "utils.h"
+#include "playbackinfo.h"
 #define BIN_FREQUENCIES { 30, 60, 125, 250, 500, 1000, 2000, 4000, 8000, 16000 }
 #define BIN_LABELS { "30", "60", "1h", "2h", "5h", "1k", "2k", "4k", "8k" }
 #define N_BINS 9
@@ -73,11 +72,8 @@ struct ctx {
     ma_decoder* pDecoder = NULL;
     AudioBuffer* pBufPlayback = NULL;
     FFT* pFFT = NULL;
-    Graph* pGraph = NULL;
-    bool
-        init = false,
-        playing = false,
-        end = true;
+    UI* pUI = NULL;
+    PlaybackInfo playbackInfo;
 };
 
 class Player {
@@ -85,11 +81,13 @@ class Player {
     ma_decoder decoder, * pDecoder = NULL;
     AudioBuffer* pBuffer = NULL;
     FFT* pFFT = NULL;
+    PlaybackInfo* pPlaybackInfo = NULL;
+    ctx* const pContext = NULL;
 public:
-    ctx context;
     enum AudioStatus status;
-    Player(const char* path);
+    Player(ctx* pContext);
     void play();
+    void pause();
+    AudioStatus load_audio(const char* filePath);
     void cleanup();
-    bool is_playing();
 };
