@@ -3,7 +3,7 @@
 #include "miniaudio.h"
 struct TimeInfo
 {
-    uint8_t
+    unsigned int
         h,
         min,
         s;
@@ -23,14 +23,7 @@ struct PlaybackInfo
         duration;
 };
 
-void compute_time_info(
-    ma_uint64 frameCursor,
-    ma_uint64 sampleRate,
-    TimeInfo *pTimeInfo
-){
-    ma_uint64 framePosSec = frameCursor/sampleRate;
-    pTimeInfo->h = framePosSec/3600;
-}
+void compute_time_info(ma_uint64 frameCursor, ma_uint64 sampleRate, TimeInfo *pTimeInfo);
 
 #include <mutex>
 extern std::mutex syncPlayback;

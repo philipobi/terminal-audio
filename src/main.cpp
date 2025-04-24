@@ -25,6 +25,11 @@ void move_playback_cursor(ctx *pContext, ma_uint64 frameCount, bool forward){
         frameCount
     ) == MA_SUCCESS) {
         pContext->playbackInfo.audioFrameCursor = frameCount;
+        compute_time_info(
+            pContext->playbackInfo.audioFrameCursor,
+            pContext->playbackInfo.sampleRate,
+            &pContext->playbackInfo.current
+        );
         pContext->playbackInfo.end = false;
     }
 }
@@ -53,11 +58,7 @@ int main(int argc, const char** argv)
     context.pUI = &ui;
     auto p = Player(&context);
 
-    ma_uint64
-        frameCount10s,
-        frameTarget,
-        audioFrameSize,
-        * pAudioFrameCursor = &context.playbackInfo.audioFrameCursor;
+    ma_uint64 frameCount10s;
 
     auto p_win = ui.barSegments[0].p_win;
     keypad(p_win, true);
@@ -66,7 +67,6 @@ int main(int argc, const char** argv)
         p.load_audio(argv[1]) == SUCCESS
         ) {
         frameCount10s = 10 * context.playbackInfo.sampleRate;
-        audioFrameSize = context.playbackInfo.audioFrameSize;
 
         p.play();
         initLock.unlock();
@@ -84,8 +84,10 @@ int main(int argc, const char** argv)
                 run = false;
             } else if (c == 'm') {
                 move_playback_cursor(&context, frameCount10s, true);
+                ui.update_player(&context.playbackInfo);
             } else if (c == 'n') {
                 move_playback_cursor(&context, frameCount10s, false);
+                ui.update_player(&context.playbackInfo);
             }
         }
     }

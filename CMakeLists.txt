@@ -35,6 +35,7 @@ add_executable(terminal-audio
     src/main.cpp
     src/frontend.cpp
     src/audio.cpp
+    src/utils.cpp
 )
 
 

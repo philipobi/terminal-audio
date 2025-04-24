@@ -312,7 +312,11 @@ AudioStatus Player::load_audio(const char* filePath) {
         pContext->pDecoder = pDecoder;
         ma_decoder_get_length_in_pcm_frames(pDecoder, &pPlaybackInfo->audioFrameSize);
         pPlaybackInfo->sampleRate = pDecoder->outputSampleRate;
-        pPlaybackInfo->audioDuration = pPlaybackInfo->audioFrameSize / pPlaybackInfo->sampleRate;
+        compute_time_info(
+            pPlaybackInfo->audioFrameSize, 
+            pPlaybackInfo->sampleRate, 
+            &pPlaybackInfo->duration
+        );
     }
     return status;
 }
