@@ -1,6 +1,7 @@
 #pragma once
 
 #include "miniaudio.h"
+#include <string>
 struct TimeInfo
 {
     unsigned int
@@ -11,6 +12,7 @@ struct TimeInfo
 
 struct PlaybackInfo
 {
+    std::string fname;
     bool
         playing = false,
         end = true;
