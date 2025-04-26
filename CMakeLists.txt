@@ -9,9 +9,9 @@ include(FetchContent)
 
 find_package(Curses REQUIRED)
 
-set(KISSFFT_STATIC ON)
-set(KISSFFT_TEST OFF)
-set(KISSFFT_TOOLS OFF)
+set(KISSFFT_STATIC ON CACHE BOOL "build static lib" FORCE)
+set(KISSFFT_TEST OFF CACHE BOOL "dont build tests" FORCE)
+set(KISSFFT_TOOLS OFF CACHE BOOL "dont build tools" FORCE)
 
 FetchContent_Declare(
     kissfft

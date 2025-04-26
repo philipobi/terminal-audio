@@ -133,7 +133,6 @@ UI::~UI()
 {
     for (auto &barSegment : barSegments)
         delwin(barSegment.p_win);
-    delwin(pFooter->p_win);
     delete[] amplitudes;
 }
 

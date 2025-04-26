@@ -2,6 +2,9 @@
 
 #include "miniaudio.h"
 #include <string>
+
+#define swap_ptr(p1, p2, tmp) (tmp) = (p1); (p1) = (p2); (p2) = (tmp)
+
 struct TimeInfo
 {
     unsigned int

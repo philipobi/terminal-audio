@@ -1,6 +1,7 @@
 #include "audio.h"
 #include "miniaudio.h"
 #include "utils.h"
+#include "config.h"
 #include <cmath>
 #include <limits>
 #include <mutex>
@@ -28,33 +29,41 @@ void playback_data_callback(ma_device *pDevice, void *pOutput,
     std::lock_guard<std::mutex> lck(syncPlayback);
     auto pCtx = (ctx *)(pDevice->pUserData);
     auto pPlaybackInfo = &pCtx->playbackInfo;
+    auto pPlaybackHandler = pCtx->pPlaybackHandler;
+    if (pPlaybackHandler && !pPlaybackHandler->allocated) pPlaybackHandler->alloc_playback(frameCount);
     if (!pPlaybackInfo->playing)
         return;
 
+    pPlaybackHandler->callback(frameCount, pOutput);
+    /*
+
     auto pBuf = pCtx->pBufPlayback;
     frameCount = pBuf->request_write(frameCount);
-
-    pBuf->seek(0);
-
-    ma_decoder_get_cursor_in_pcm_frames(pCtx->pDecoder,
-                                        &pPlaybackInfo->audioFrameCursor);
+    pBuf->seek(pBuf->writePos);
 
     // read pcm frames into buffer
-    if (ma_decoder_read_pcm_frames(pCtx->pDecoder, pBuf->ptr, frameCount,
-                                   &pBuf->writePos) == MA_AT_END)
+    ma_uint64 framesRead;
+    if (
+        ma_decoder_read_pcm_frames(
+            pCtx->pDecoder,
+            pBuf->ptr,
+            frameCount,
+            &framesRead) == MA_AT_END)
     {
         pPlaybackInfo->playing = false;
         pPlaybackInfo->end = true;
     }
+
+    pBuf->writePos += framesRead;
+
     // update cursor position
     ma_decoder_get_cursor_in_pcm_frames(pCtx->pDecoder,
                                         &pPlaybackInfo->audioFrameCursor);
 
     compute_time_info(
-        pPlaybackInfo->audioFrameCursor, 
-        pPlaybackInfo->sampleRate, 
-        &pPlaybackInfo->current
-    );
+        pPlaybackInfo->audioFrameCursor,
+        pPlaybackInfo->sampleRate,
+        &pPlaybackInfo->current);
     pCtx->pUI->update_player(pPlaybackInfo);
 
     // write pcm frames to device
@@ -64,6 +73,7 @@ void playback_data_callback(ma_device *pDevice, void *pOutput,
     // update FFT and graph using new frames
     if (pCtx->pFFT->update(pBuf))
         pCtx->pUI->update_amplitudes(pCtx->pFFT->magnitudes_raw);
+    */
 }
 
 void print_audio_status(AudioStatus status)
@@ -119,21 +129,18 @@ void AudioBuffer::seek(ma_uint64 framePos)
     ptr = (char *)buf + framePos * channels * bps;
 }
 
-ma_uint64 AudioBuffer::request_write(ma_uint64 frameCount)
+void AudioBuffer::request_write(ma_uint64 *pFrameCount)
 {
-    if (buf == NULL)
-        malloc_frames(frameCount);
-    if (frameSize < frameCount)
-    {
-        if (++i == n)
-        {
-            malloc_frames(1.5 * frameCount);
-            i = 0;
-            return frameCount;
-        }
-        return frameSize;
-    }
-    return frameCount;
+    if (writePos + *pFrameCount > frameSize)
+        *pFrameCount = frameSize - writePos;
+    seek(writePos);
+}
+
+void AudioBuffer::request_read(ma_uint64 *pFrameCount)
+{
+    if (readPos + *pFrameCount > writePos)
+        *pFrameCount = writePos - readPos;
+    seek(readPos);
 }
 
 void AudioBuffer::malloc_frames(ma_uint64 n_frames)
@@ -141,6 +148,16 @@ void AudioBuffer::malloc_frames(ma_uint64 n_frames)
     free(buf);
     buf = malloc(n_frames * channels * bps);
     frameSize = buf == NULL ? 0 : n_frames;
+}
+
+bool AudioBuffer::empty()
+{
+    return readPos == writePos;
+}
+
+bool AudioBuffer::full()
+{
+    return writePos == frameSize;
 }
 
 FFT::FFT(ma_uint64 frameSize, ma_format format, ma_uint32 channels,
@@ -309,6 +326,12 @@ AudioStatus Player::load_audio(const char *filePath)
         ma_decoder_get_length_in_pcm_frames(pDecoder,
                                             &pPlaybackInfo->audioFrameSize);
         pPlaybackInfo->sampleRate = pDecoder->outputSampleRate;
+        pPlaybackHanlder = new PlaybackHandler(
+            pDecoder,
+            pDevice,
+            pFFT->pConverter
+        );
+        pContext->pPlaybackHandler = pPlaybackHanlder;
     }
     return status;
 }
