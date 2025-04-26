@@ -21,12 +21,13 @@ void print_audio_status(AudioStatus status);
 
 class AudioBuffer
 {
-    ma_uint32 bps;
+    ma_uint32 Bps;
     void *const buf = NULL;
+
 public:
     void *ptr = NULL;
     ma_uint32 channels;
-    ma_uint64 frameSize, writePos, readPos, frameCursor;
+    ma_uint64 frameSize, writePos, readPos;
     ma_format format;
     AudioStatus status;
     AudioBuffer(ma_uint64 frameSize, ma_uint32 channels, ma_format format);
@@ -61,13 +62,6 @@ public:
     void cleanup();
 };
 
-struct ctx
-{
-    ma_decoder *pDecoder = NULL;
-    void (* p_update_bars)(const double *amplitudes_raw) = NULL;
-    void (* p_update_player)(const PlaybackInfo *pPlaybackInfo) = NULL;
-};
-
 class PlaybackHandler
 {
     AudioBuffer
@@ -86,9 +80,8 @@ class PlaybackHandler
         offsetFFT;
     FFT *pFFT;
     ma_result decoderStatus;
-    void (* p_update_bars)(const double *amplitudes_raw);
-    void (* p_update_player)(const PlaybackInfo *pPlaybackInfo);
-
+    const UI *pUI;
+    PlaybackInfo playbackInfo;
     bool allocated = false;
 
     void alloc_playback(ma_uint64 frameCount)
@@ -135,11 +128,8 @@ class PlaybackHandler
     }
 
 public:
-    PlaybackInfo playbackInfo;
-
-    PlaybackHandler(std::string fname, ma_decoder *pDecoder) : pDecoder(pDecoder)
+    PlaybackHandler(ma_decoder *pDecoder, const UI *pUI) : pDecoder(pDecoder), pUI(pUI)
     {
-        playbackInfo.fname = fname;
         ma_decoder_get_length_in_pcm_frames(pDecoder, &playbackInfo.audioFrameSize);
         playbackInfo.sampleRate = pDecoder->outputSampleRate;
         compute_time_info(&playbackInfo.audioFrameSize, &playbackInfo.duration);
@@ -202,10 +192,12 @@ public:
         playbackInfo.playing = true;
     }
 
+    void pause() { playbackInfo.playing = false; }
+
     void toggle_play_pause()
     {
         if (playbackInfo.playing)
-            playbackInfo.playing = false;
+            pause();
         else
             play();
     }
@@ -274,23 +266,19 @@ public:
     }
 };
 
-
-
 class Player
 {
     ma_device device, *pDevice = NULL;
     ma_decoder decoder, *pDecoder = NULL;
-    AudioBuffer *pBuffer = NULL;
-    FFT *pFFT = NULL;
-    PlaybackInfo *pPlaybackInfo = NULL;
-    ctx *const pContext = NULL;
-    PlaybackHandler *pPlaybackHanlder = NULL;
+    PlaybackHandler
+        *pPlaybackHandler = NULL,
+        **ppPlaybackHandler = &pPlaybackHandler;
 
 public:
     enum AudioStatus status;
-    Player(ctx *pContext);
+    Player(const char *filePath, const UI *pUI);
+    void toggle_play_pause();
     void play();
-    void pause();
-    AudioStatus load_audio(const char *filePath);
+    void move_playback_cursor(ma_uint8 s, bool forward);
     void cleanup();
 };

@@ -1,6 +1,8 @@
 #pragma once
 #include <ncurses.h>
-
+#include <utility>
+#include <memory>
+#include <array>
 #include <vector>
 
 #include "config.h"
@@ -11,9 +13,10 @@ class Window
     int y, x;
 
 public:
-    WINDOW *p_win;
+    std::unique_ptr<WINDOW, int (*)(WINDOW *)> p_win;
     int width, height;
-    Window(int height, int width, int y, int x, const Window *pParent = NULL);
+
+    explicit Window(int height, int width, int y, int x, const std::unique_ptr<Window> &pParent = NULL);
 
     void set_color(int i);
     void clear();
@@ -23,6 +26,17 @@ public:
 };
 
 WINDOW *newwin_rel(const Window *pParent, int nlines, int ncols, int begin_y, int begin_x);
+
+class Bar
+{
+    static std::vector<Window> &segments;
+    int height, width, y, x;
+
+public:
+    static void set_segments(std::vector<Window> &segments_);
+    explicit Bar(int height, int width, int y, int x);
+    void draw_vertical(int n);
+};
 
 class UI
 {
@@ -45,28 +59,29 @@ class UI
         window_margin + win_bars_height + window_margin;
 
     double *amplitudes = NULL;
-    int nsegments = 3;
-    float segment_ratios[3] = {0.2, 0.1, 0.7};
-    int segment_heights[3];
+
+    static const int nsegments = N_SEGMENTS;
+    std::array<float, nsegments> segment_ratios = {0.2, 0.1, 0.7};
+    std::array<int, nsegments> segment_heights;
+    std::vector<Window> barSegments;
+    std::vector<Bar> bars;
+
     float amplitude_decay = 0.8;
     bool playerInit = false, playerPlaying = false;
 
-    Window
-        *pBarsContainer = NULL,
-        *pFooter = NULL,
-        *pPlayerContainer = NULL,
-        *pProgressBar = NULL;
-
-    std::vector<Window> barSegments;
+    std::unique_ptr<Window>
+        pBarsContainer,
+        pFooter,
+        pPlayerContainer,
+        pProgressBar;
 
 public:
-    Window
-        *pContainer = NULL,
-        *pTimeCurrent = NULL,
-        *pTimeTotal = NULL;
-    UI(int y, int x);
-    ~UI();
+    std::unique_ptr<Window>
+        pContainer,
+        pTimeCurrent,
+        pTimeTotal;
+    explicit UI(int y, int x);
     void update_amplitudes(const double *amplitudes_raw);
     void update_player(const PlaybackInfo *pPlaybackInfo);
-    void update_time(Window* pWin, const TimeInfo *pTime);
+    void update_time(std::unique_ptr<Window> &pWin, const TimeInfo *pTime);
 };

@@ -15,10 +15,9 @@ struct TimeInfo
 
 struct PlaybackInfo
 {
-    std::string fname;
     bool
         playing = false,
-        end = true;
+        end = false;
     ma_uint64
         sampleRate,
         audioFrameCursor = 0,

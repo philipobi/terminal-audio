@@ -34,29 +34,15 @@ int main(int argc, const char **argv)
 
     std::string fname = std::filesystem::path(argv[1]).replace_extension("").filename().string();
 
-    std::unique_lock<std::mutex> initLock(syncPlayback);
-    ctx context;
-    context.pUI = &ui;
-    context.playbackInfo.fname = fname.empty() ? argv[1] : fname;
-    auto p = Player(&context);
+    std::unique_lock<std::mutex> lock(syncPlayback);
+    auto p = Player(argv[1], &ui);
 
-    ma_uint64 frameCount10s;
-
-    auto p_win = ui.pContainer->p_win;
+    auto p_win = ui.pContainer->p_win.get();
     keypad(p_win, true);
-    if (
-        p.status == SUCCESS &&
-        p.load_audio(argv[1]) == SUCCESS)
+    if (p.status == SUCCESS)
     {
-        frameCount10s = 10 * context.playbackInfo.sampleRate;
-        compute_time_info(
-            context.playbackInfo.audioFrameSize,
-            context.playbackInfo.sampleRate,
-            &context.playbackInfo.duration);
-        ui.update_time(ui.pTimeTotal, &context.playbackInfo.duration);
-
         p.play();
-        initLock.unlock();
+        lock.unlock();
 
         char c;
         bool run = true;
@@ -65,12 +51,9 @@ int main(int argc, const char **argv)
             c = wgetch(p_win);
             if (c == 'p')
             {
-                std::unique_lock<std::mutex> lck(syncPlayback);
-                if (context.playbackInfo.playing)
-                    p.pause();
-                else
-                    p.play();
-                lck.unlock();
+                lock.lock();
+                p.toggle_play_pause();
+                lock.unlock();
             }
             else if (c == 'q')
             {
@@ -78,13 +61,15 @@ int main(int argc, const char **argv)
             }
             else if (c == 'm')
             {
-                move_playback_cursor(&context, frameCount10s, true);
-                ui.update_player(&context.playbackInfo);
+                lock.lock();
+                p.move_playback_cursor(10, true);
+                lock.unlock();
             }
             else if (c == 'n')
             {
-                move_playback_cursor(&context, frameCount10s, false);
-                ui.update_player(&context.playbackInfo);
+                lock.lock();
+                p.move_playback_cursor(10, false);
+                lock.unlock();
             }
         }
     }
