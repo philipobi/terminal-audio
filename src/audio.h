@@ -22,23 +22,50 @@ void print_audio_status(AudioStatus status);
 class AudioBuffer
 {
     ma_uint32 bps;
-    void *buf = NULL;
-    int i = 0, n = 10;
-
+    void *const buf = NULL;
 public:
     void *ptr = NULL;
     ma_uint32 channels;
-    ma_uint64 frameSize, writePos, readPos;
+    ma_uint64 frameSize, writePos, readPos, frameCursor;
     ma_format format;
     AudioStatus status;
     AudioBuffer(ma_uint64 frameSize, ma_uint32 channels, ma_format format);
     ~AudioBuffer();
     void seek(ma_uint64 framePos);
-    void malloc_frames(ma_uint64 n_frames);
     bool empty();
     bool full();
     void request_write(ma_uint64 *pFrameCount);
     void request_read(ma_uint64 *pFrameCount);
+    void clear();
+};
+
+class FFT
+{
+    int frequencies[N_BINS + 1] = BIN_FREQUENCIES;
+    kiss_fft_cpx *frequencyPtrs[N_BINS + 1];
+    kiss_fftr_cfg FFTcfg;
+    kiss_fft_cpx *freqdata = NULL;
+    kiss_fft_scalar *timedata;
+    const ma_uint64 N;
+    double windowSum, vmin, vmax;
+    double *pMag, *pMag_raw;
+    void reduce_spectrum();
+
+public:
+    AudioStatus status;
+    double magnitudes_raw[N_BINS] = {0};
+    double magnitudes[N_BINS] = {0};
+
+    FFT(ma_uint64 N, kiss_fft_scalar *timedata, ma_uint32 sampleRate);
+    void compute();
+    void cleanup();
+};
+
+struct ctx
+{
+    ma_decoder *pDecoder = NULL;
+    void (* p_update_bars)(const double *amplitudes_raw) = NULL;
+    void (* p_update_player)(const PlaybackInfo *pPlaybackInfo) = NULL;
 };
 
 class PlaybackHandler
@@ -49,27 +76,20 @@ class PlaybackHandler
         *pBufFFT,
         *tmp;
     ma_decoder *pDecoder;
-    ma_device *pDevice;
-    ma_data_converter *pConverter;
+    ma_data_converter converter, *pConverter;
     ma_uint64
         frameCountBuf,
         framesRead,
         framesWrite,
+        framePosSec,
+        frameTarget,
         offsetFFT;
+    FFT *pFFT;
+    ma_result decoderStatus;
+    void (* p_update_bars)(const double *amplitudes_raw);
+    void (* p_update_player)(const PlaybackInfo *pPlaybackInfo);
 
-public:
     bool allocated = false;
-
-    PlaybackHandler(ma_decoder *pDecoder, ma_device *pDevice, ma_data_converter *pConverter) : pDecoder(pDecoder),
-                                                                                               pDevice(pDevice),
-                                                                                               pConverter(pConverter)
-    {
-        pBufFFT = new AudioBuffer(
-            FFT_BUFFER_FRAMES,
-            1,
-            SAMPLE_FORMAT);
-        pBufFFT->seek(0);
-    }
 
     void alloc_playback(ma_uint64 frameCount)
     {
@@ -80,23 +100,128 @@ public:
 
         pBufMain = new AudioBuffer(
             n * frameCountBuf,
-            pDevice->playback.channels,
-            pDevice->playback.format);
+            pDecoder->outputChannels,
+            pDecoder->outputFormat);
         pBufPlayback = new AudioBuffer(
             n * frameCountBuf,
-            pDevice->playback.channels,
-            pDevice->playback.format);
+            pDecoder->outputChannels,
+            pDecoder->outputFormat);
 
         offsetFFT = n * frameCountBuf - FFT_BUFFER_FRAMES;
         allocated = true;
     }
 
+    void compute_time_info(ma_uint64 *pFrameCursor, TimeInfo *pTimeInfo)
+    {
+        framePosSec = *pFrameCursor / playbackInfo.sampleRate;
+        pTimeInfo->h = framePosSec / 3600;
+        framePosSec %= 3600;
+        pTimeInfo->min = framePosSec / 60;
+        framePosSec %= 60;
+        pTimeInfo->s = framePosSec;
+    }
+
+    void clear_buffers()
+    {
+        pBufMain->clear();
+        pBufPlayback->clear();
+    }
+
+    void swap_buffers()
+    {
+        pBufMain->readPos = 0;
+        pBufPlayback->writePos = 0;
+        swap_ptr(pBufMain, pBufPlayback, tmp);
+    }
+
+public:
+    PlaybackInfo playbackInfo;
+
+    PlaybackHandler(std::string fname, ma_decoder *pDecoder) : pDecoder(pDecoder)
+    {
+        playbackInfo.fname = fname;
+        ma_decoder_get_length_in_pcm_frames(pDecoder, &playbackInfo.audioFrameSize);
+        playbackInfo.sampleRate = pDecoder->outputSampleRate;
+        compute_time_info(&playbackInfo.audioFrameSize, &playbackInfo.duration);
+
+        pBufFFT = new AudioBuffer(
+            FFT_BUFFER_FRAMES,
+            1,
+            SAMPLE_FORMAT);
+        pBufFFT->seek(0);
+
+        auto converterConfig = ma_data_converter_config_init(
+            pDecoder->outputFormat,
+            SAMPLE_FORMAT,
+            pDecoder->outputChannels,
+            1,
+            playbackInfo.sampleRate,
+            playbackInfo.sampleRate);
+
+        ma_data_converter_init(&converterConfig, NULL, &converter);
+
+        pFFT = new FFT(
+            FFT_BUFFER_FRAMES,
+            (kiss_fft_scalar *)pBufFFT->ptr,
+            pDecoder->outputSampleRate);
+    }
+
+    void move_playback_cursor(ma_uint8 s, bool forward)
+    {
+        frameTarget = s * playbackInfo.sampleRate;
+        if (forward)
+        {
+            frameTarget += playbackInfo.audioFrameCursor;
+            if (frameTarget >= playbackInfo.audioFrameSize)
+                frameTarget = playbackInfo.audioFrameSize - 1;
+        }
+        else
+        {
+            if (frameTarget > playbackInfo.audioFrameCursor)
+                frameTarget = 0;
+            else
+                frameTarget = playbackInfo.audioFrameCursor - frameTarget;
+        }
+        decoderStatus = ma_decoder_seek_to_pcm_frame(pDecoder, frameTarget);
+        if (decoderStatus != MA_SUCCESS)
+            return;
+        playbackInfo.end = false;
+        playbackInfo.audioFrameCursor = frameTarget;
+        compute_time_info(&playbackInfo.audioFrameCursor, &playbackInfo.current);
+        clear_buffers();
+    }
+
+    void play()
+    {
+        if (playbackInfo.end)
+        {
+            clear_buffers();
+            ma_decoder_seek_to_pcm_frame(pDecoder, 0);
+            playbackInfo.end = false;
+        }
+        playbackInfo.playing = true;
+    }
+
+    void toggle_play_pause()
+    {
+        if (playbackInfo.playing)
+            playbackInfo.playing = false;
+        else
+            play();
+    }
+
     void callback(ma_uint64 frameCount, void *pOutput)
     {
+        if (!allocated)
+            alloc_playback(frameCount);
+        if (!playbackInfo.playing)
+            return;
+
         if (!pBufPlayback->empty())
         {
             framesRead = frameCount;
             pBufPlayback->request_read(&framesRead);
+
             ma_copy_pcm_frames(
                 pOutput,
                 pBufPlayback->ptr,
@@ -104,72 +229,52 @@ public:
                 pBufPlayback->format,
                 pBufPlayback->channels);
             pBufPlayback->readPos += framesRead;
+
+            playbackInfo.audioFrameCursor += framesRead;
+            compute_time_info(&playbackInfo.audioFrameCursor, &playbackInfo.current);
         }
+        else if (pBufPlayback->empty() && playbackInfo.end)
+        {
+            playbackInfo.playing = false;
+        }
+
+        if (playbackInfo.end)
+            return;
 
         framesWrite = frameCount;
         pBufMain->request_write(&framesWrite);
-        ma_decoder_read_pcm_frames(
+        decoderStatus = ma_decoder_read_pcm_frames(
             pDecoder,
             pBufMain->ptr,
             framesWrite,
             &framesRead);
         pBufMain->writePos += framesRead;
 
-        if (!pBufMain->full())
+        if (decoderStatus == MA_AT_END)
+        {
+            playbackInfo.end = true;
+            swap_buffers();
             return;
+        }
 
-        framesRead = framesWrite = FFT_BUFFER_FRAMES;
-        pBufMain->seek(offsetFFT);
-        ma_data_converter_process_pcm_frames(
-            pConverter,
-            pBufMain->ptr,
-            &framesRead,
-            pBufFFT->ptr,
-            &framesWrite);
+        if (pBufMain->full())
+        {
+            framesRead = framesWrite = FFT_BUFFER_FRAMES;
+            pBufMain->seek(offsetFFT);
+            ma_data_converter_process_pcm_frames(
+                pConverter,
+                pBufMain->ptr,
+                &framesRead,
+                pBufFFT->ptr,
+                &framesWrite);
+            swap_buffers();
 
-        pBufMain->readPos = 0;
-        pBufPlayback->writePos = 0;
-        swap_ptr(pBufMain, pBufPlayback, tmp);
+            pFFT->compute();
+        }
     }
 };
 
-class FFT
-{
-    int frequencies[N_BINS + 1] = BIN_FREQUENCIES;
-    kiss_fft_cpx *frequencyPtrs[N_BINS + 1];
-    AudioBuffer *pBuffer = NULL;
-    ma_uint64 frameSizeFFT, frameCountIn, frameCountOut;
-    kiss_fftr_cfg FFTcfg;
-    kiss_fft_cpx *freq_cpx = NULL;
-    double windowSum, vmin, vmax;
-    double *pMag, *pMag_raw;
-    void *ptr0;
 
-public:
-    ma_data_converter converter, *pConverter = NULL;
-    double magnitudes_raw[N_BINS] = {0};
-    double magnitudes[N_BINS] = {0};
-    AudioStatus status;
-
-    FFT(
-        ma_uint64 frameSize,
-        ma_format format,
-        ma_uint32 channels,
-        ma_uint32 sampleRate);
-    bool update(AudioBuffer *pBufPlayback);
-    void cleanup();
-    void reduce_spectrum();
-};
-
-struct ctx
-{
-    ma_decoder *pDecoder = NULL;
-    AudioBuffer *pBufPlayback = NULL;
-    FFT *pFFT = NULL;
-    UI *pUI = NULL;
-    PlaybackHandler *pPlaybackHandler = NULL;
-    PlaybackInfo playbackInfo;
-};
 
 class Player
 {

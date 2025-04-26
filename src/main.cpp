@@ -11,35 +11,6 @@
 
 std::mutex syncPlayback;
 
-void move_playback_cursor(ctx *pContext, ma_uint64 frameCount, bool forward)
-{
-    std::lock_guard<std::mutex> lck(syncPlayback);
-    if (forward)
-    {
-        frameCount = std::min(
-            pContext->playbackInfo.audioFrameCursor + frameCount,
-            pContext->playbackInfo.audioFrameSize - 1);
-    }
-    else
-    {
-        if (frameCount > pContext->playbackInfo.audioFrameCursor)
-            frameCount = 0;
-        else
-            frameCount = pContext->playbackInfo.audioFrameCursor - frameCount;
-    }
-    if (ma_decoder_seek_to_pcm_frame(
-            pContext->pDecoder,
-            frameCount) == MA_SUCCESS)
-    {
-        pContext->playbackInfo.audioFrameCursor = frameCount;
-        compute_time_info(
-            pContext->playbackInfo.audioFrameCursor,
-            pContext->playbackInfo.sampleRate,
-            &pContext->playbackInfo.current);
-        pContext->playbackInfo.end = false;
-    }
-}
-
 int main(int argc, const char **argv)
 {
     if (argc < 2)

@@ -21,14 +21,12 @@ struct PlaybackInfo
         end = true;
     ma_uint64
         sampleRate,
-        audioFrameCursor,
+        audioFrameCursor = 0,
         audioFrameSize;
     TimeInfo
         current,
         duration;
 };
-
-void compute_time_info(ma_uint64 frameCursor, ma_uint64 sampleRate, TimeInfo *pTimeInfo);
 
 #include <mutex>
 extern std::mutex syncPlayback;

@@ -16,7 +16,7 @@ double hamming(ma_uint64 n, ma_uint64 N)
 
 template <class T>
 void apply_windowfunc(T *pData, ma_uint64 N,
-                      double (*func)(ma_uint64, ma_uint64))
+                      double (*pFunc)(ma_uint64, ma_uint64))
 {
     ma_uint64 n;
     for (n = 0; n < N; n++, pData++)
@@ -26,16 +26,17 @@ void apply_windowfunc(T *pData, ma_uint64 N,
 void playback_data_callback(ma_device *pDevice, void *pOutput,
                             const void *pInput, ma_uint32 frameCount)
 {
+    /*
     std::lock_guard<std::mutex> lck(syncPlayback);
     auto pCtx = (ctx *)(pDevice->pUserData);
     auto pPlaybackInfo = &pCtx->playbackInfo;
     auto pPlaybackHandler = pCtx->pPlaybackHandler;
-    if (pPlaybackHandler && !pPlaybackHandler->allocated) pPlaybackHandler->alloc_playback(frameCount);
+    if (pPlaybackHandler && !pPlaybackHandler->allocated)
+        pPlaybackHandler->alloc_playback(frameCount);
     if (!pPlaybackInfo->playing)
         return;
 
     pPlaybackHandler->callback(frameCount, pOutput);
-    /*
 
     auto pBuf = pCtx->pBufPlayback;
     frameCount = pBuf->request_write(frameCount);
@@ -113,13 +114,10 @@ AudioBuffer::AudioBuffer(ma_uint64 frameSize, ma_uint32 channels,
       writePos(0),
       readPos(0),
       channels(channels),
-      bps(ma_get_bytes_per_sample(format))
+      bps(ma_get_bytes_per_sample(format)),
+      buf(malloc(frameSize * channels * bps))
 {
-    if (frameSize != 0)
-    {
-        malloc_frames(frameSize);
-        status = buf == NULL ? ERR_INIT_BUF : SUCCESS;
-    }
+    status = buf == NULL ? ERR_INIT_BUF : SUCCESS;
 }
 
 AudioBuffer::~AudioBuffer() { free(buf); }
@@ -143,13 +141,6 @@ void AudioBuffer::request_read(ma_uint64 *pFrameCount)
     seek(readPos);
 }
 
-void AudioBuffer::malloc_frames(ma_uint64 n_frames)
-{
-    free(buf);
-    buf = malloc(n_frames * channels * bps);
-    frameSize = buf == NULL ? 0 : n_frames;
-}
-
 bool AudioBuffer::empty()
 {
     return readPos == writePos;
@@ -160,49 +151,36 @@ bool AudioBuffer::full()
     return writePos == frameSize;
 }
 
-FFT::FFT(ma_uint64 frameSize, ma_format format, ma_uint32 channels,
-         ma_uint32 sampleRate)
-    : frameSizeFFT(frameSize)
+void AudioBuffer::clear()
 {
-    if (frameSizeFFT % 2 == 1)
-        frameSizeFFT += 1;
+    readPos = 0;
+    writePos = 0;
+}
+
+FFT::FFT(ma_uint64 N, kiss_fft_scalar *timedata, ma_uint32 sampleRate) : N(N),
+                                                                         timedata(timedata)
+{
     windowSum = 0;
-    for (ma_uint64 n = 0; n < frameSizeFFT; n++)
-        windowSum += hamming(n, frameSizeFFT);
+    for (ma_uint64 n = 0; n < N; n++)
+        windowSum += hamming(n, N);
 
-    FFTcfg = kiss_fftr_alloc(frameSizeFFT, 0, NULL, NULL);
-    auto converterConfig = ma_data_converter_config_init(
-        format, SAMPLE_FORMAT, channels, 1, sampleRate, sampleRate);
+    FFTcfg = kiss_fftr_alloc(N, 0, NULL, NULL);
 
-    if ((status = ma_data_converter_init(&converterConfig, NULL, &converter) ==
-                          MA_SUCCESS
-                      ? SUCCESS
-                      : ERR_INIT_CONV) == SUCCESS &&
-        (pBuffer = new AudioBuffer(frameSizeFFT, 1, SAMPLE_FORMAT),
-         status = pBuffer->status) == SUCCESS)
+    freqdata = new kiss_fft_cpx[N];
+    kiss_fft_cpx **ppFreq, *pEnd = freqdata + N / 2;
+    int i;
+    for (i = 0, ppFreq = frequencyPtrs; i < N_BINS + 1; i++, ppFreq++)
     {
-        pConverter = &converter;
-        freq_cpx = new kiss_fft_cpx[frameSizeFFT];
-        kiss_fft_cpx **ppFreq, *pEnd = freq_cpx + frameSizeFFT / 2;
-        int i;
-        for (i = 0, ppFreq = frequencyPtrs; i < N_BINS + 1; i++, ppFreq++)
-        {
-            *ppFreq = freq_cpx + frequencies[i] * frameSizeFFT / sampleRate;
-            if (*ppFreq > pEnd)
-                *ppFreq = pEnd;
-
-            vmin = std::numeric_limits<double>::infinity();
-            vmax = -std::numeric_limits<double>::infinity();
-        }
+        *ppFreq = freqdata + frequencies[i] * N / sampleRate;
+        if (*ppFreq > pEnd)
+            *ppFreq = pEnd;
     }
 }
 
 void FFT::cleanup()
 {
     kiss_fftr_free(FFTcfg);
-    ma_data_converter_uninit(pConverter, NULL);
-    delete pBuffer;
-    delete[] freq_cpx;
+    delete[] freqdata;
 }
 
 void FFT::reduce_spectrum()
@@ -231,33 +209,11 @@ void FFT::reduce_spectrum()
     }
 }
 
-bool FFT::update(AudioBuffer *pBufPlayback)
+void FFT::compute()
 {
-    frameCountIn =
-        std::min(pBufPlayback->writePos, frameSizeFFT - pBuffer->writePos);
-    frameCountOut = frameCountIn;
-    ptr0 = pBufPlayback->ptr;
-
-    pBuffer->seek(pBuffer->writePos);
-    pBufPlayback->seek(pBufPlayback->writePos - frameCountIn);
-    ma_data_converter_process_pcm_frames(pConverter, pBufPlayback->ptr,
-                                         &frameCountIn, pBuffer->ptr,
-                                         &frameCountOut);
-    pBuffer->writePos += frameCountOut;
-
-    pBufPlayback->ptr = ptr0;
-
-    if (pBuffer->writePos != frameSizeFFT)
-        return false;
-
-    pBuffer->seek(0);
-    apply_windowfunc<sample_type>((sample_type *)pBuffer->ptr, frameSizeFFT,
-                                  &hamming);
-    kiss_fftr(FFTcfg, (const kiss_fft_scalar *)(pBuffer->ptr), freq_cpx);
-    pBuffer->writePos = 0;
+    apply_windowfunc<kiss_fft_scalar>(timedata, FFT_BUFFER_FRAMES, &hamming);
+    kiss_fftr(FFTcfg, timedata, freqdata);
     reduce_spectrum();
-
-    return true;
 }
 
 Player::Player(ctx *pContext)
@@ -329,8 +285,7 @@ AudioStatus Player::load_audio(const char *filePath)
         pPlaybackHanlder = new PlaybackHandler(
             pDecoder,
             pDevice,
-            pFFT->pConverter
-        );
+            pFFT->pConverter);
         pContext->pPlaybackHandler = pPlaybackHanlder;
     }
     return status;
