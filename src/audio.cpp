@@ -142,7 +142,8 @@ void FFT::reduce_spectrum()
     int i, n;
     double sum;
     kiss_fft_cpx *pFreq0, *pFreq1;
-    for (i = 0, pMag_raw = magnitudes_raw; i < N_BINS; i++, pMag_raw++)
+    i = 0;
+    for (auto& mag : magnitudesRaw)
     {
         pFreq0 = frequencyPtrs[i];
         pFreq1 = frequencyPtrs[i + 1];
@@ -155,11 +156,8 @@ void FFT::reduce_spectrum()
         }
         if (n != 0)
             sum /= n;
-        *pMag_raw = 20 * std::log10(sum + 1e-12);
-        if (*pMag_raw < vmin)
-            vmin = *pMag_raw;
-        if (*pMag_raw > vmax)
-            vmax = *pMag_raw;
+        mag = 20 * std::log10(sum + 1e-12);
+        i++;
     }
 }
 
@@ -170,7 +168,7 @@ void FFT::compute()
     reduce_spectrum();
 }
 
-Player::Player(const char *filePath, const UI *pUI)
+Player::Player(const char *filePath, UI *pUI)
 {
     auto deviceConfig = ma_device_config_init(ma_device_type_playback);
     deviceConfig.dataCallback = playback_data_callback;

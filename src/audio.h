@@ -48,14 +48,12 @@ class FFT
     kiss_fft_cpx *freqdata = NULL;
     kiss_fft_scalar *timedata;
     const ma_uint64 N;
-    double windowSum, vmin, vmax;
-    double *pMag, *pMag_raw;
+    double windowSum;
     void reduce_spectrum();
 
 public:
     AudioStatus status;
-    double magnitudes_raw[N_BINS] = {0};
-    double magnitudes[N_BINS] = {0};
+    std::array<double, N_BINS> magnitudesRaw{0};
 
     FFT(ma_uint64 N, kiss_fft_scalar *timedata, ma_uint32 sampleRate);
     void compute();
@@ -72,7 +70,6 @@ class PlaybackHandler
     ma_decoder *pDecoder;
     ma_data_converter converter, *pConverter;
     ma_uint64
-        frameCountBuf,
         framesRead,
         framesWrite,
         framePosSec,
@@ -80,27 +77,27 @@ class PlaybackHandler
         offsetFFT;
     FFT *pFFT;
     ma_result decoderStatus;
-    const UI *pUI;
+    UI *pUI;
     PlaybackInfo playbackInfo;
     bool allocated = false;
 
     void alloc_playback(ma_uint64 frameCount)
     {
-        frameCountBuf = frameCount;
         int n = 1;
-        while (n * frameCountBuf < FFT_BUFFER_FRAMES)
+        while (n * frameCount < FFT_BUFFER_FRAMES)
             n++;
+        pUI->set_animation_frames(n - 1);
 
         pBufMain = new AudioBuffer(
-            n * frameCountBuf,
+            n * frameCount,
             pDecoder->outputChannels,
             pDecoder->outputFormat);
         pBufPlayback = new AudioBuffer(
-            n * frameCountBuf,
+            n * frameCount,
             pDecoder->outputChannels,
             pDecoder->outputFormat);
 
-        offsetFFT = n * frameCountBuf - FFT_BUFFER_FRAMES;
+        offsetFFT = n * frameCount - FFT_BUFFER_FRAMES;
         allocated = true;
     }
 
@@ -128,7 +125,7 @@ class PlaybackHandler
     }
 
 public:
-    PlaybackHandler(ma_decoder *pDecoder, const UI *pUI) : pDecoder(pDecoder), pUI(pUI)
+    PlaybackHandler(ma_decoder *pDecoder, UI *pUI) : pDecoder(pDecoder), pUI(pUI)
     {
         ma_decoder_get_length_in_pcm_frames(pDecoder, &playbackInfo.audioFrameSize);
         playbackInfo.sampleRate = pDecoder->outputSampleRate;
@@ -224,6 +221,7 @@ public:
 
             playbackInfo.audioFrameCursor += framesRead;
             compute_time_info(&playbackInfo.audioFrameCursor, &playbackInfo.current);
+            pUI->animate_amplitudes();
         }
         else if (pBufPlayback->empty() && playbackInfo.end)
         {
@@ -276,7 +274,7 @@ class Player
 
 public:
     enum AudioStatus status;
-    Player(const char *filePath, const UI *pUI);
+    Player(const char *filePath, UI *pUI);
     void toggle_play_pause();
     void play();
     void move_playback_cursor(ma_uint8 s, bool forward);

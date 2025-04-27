@@ -39,9 +39,9 @@ void Window::stack_n_horizontal(int y, int n, char c, int offset)
 
 void Bar::set_segments(std::vector<Window> &segments_) { segments = segments_; }
 
-Bar::Bar(int height, int width, int y, int x) : height(height), width(width), y(y), x(x) {}
+Bar::Bar(int x) : x(x) {}
 
-void Bar::draw_vertical(int n)
+void Bar::draw(int n)
 {
     int i, j, n1;
     for (auto &segment : segments)
@@ -55,25 +55,32 @@ void Bar::draw_vertical(int n)
                     x + j,
                     '#');
         n -= n1;
-        if(n == 0) break;
+        if (n == 0)
+            break;
     }
 }
 
-/*
-for (auto &barSegment : barSegments)
-        {
-            n = std::min(a, barSegment.height);
-            for (j = 0; j < bar_width; j++)
-            {
-                barSegment.stack_n_vertical(
-                    i * (bar_width + bar_margin) + j,
-                    n);
-            }
-            a -= n;
-            if (a == 0)
-                break;
-        }
-*/
+void Bar::set_target_amplitude(int a)
+{
+    i_anim = 1;
+    amp0 = amp1;
+    amp1 = a;
+}
+
+void Bar::animate()
+{
+    draw(
+        std::round(
+            amp0 + (amp1 - amp0) *
+                       std::min<float>(float(i_anim) / frameCount, 1)));
+    ++i_anim;
+}
+
+void Bar::clear()
+{
+    amp1 = 0;
+    set_target_amplitude(0);
+}
 
 UI::UI(int y, int x)
     : y(y), x(x), amplitudes(new double[nbars]{0})
@@ -106,15 +113,6 @@ UI::UI(int y, int x)
             pContainer));
 
     // create bars
-    for(int i = 0; i < nbars; i++){
-        bars.emplace_back(
-            bar_height,
-            bar_width,
-            0,
-            i * (bar_width + bar_margin)
-        );
-    }
-
     partition_fractions<int>(
         segment_ratios.size(),
         segment_ratios.data(),
@@ -132,8 +130,12 @@ UI::UI(int y, int x)
         y_off += segment_heights[i];
     }
     std::reverse(barSegments.begin(), barSegments.end());
-    
+
+    Bar::height = bar_height;
+    Bar::width = bar_width;
     Bar::set_segments(barSegments);
+    for (int i = 0; i < nbars; i++)
+        bars.emplace_back(i * (bar_width + bar_margin));
 
     pFooter = std::unique_ptr<Window>(
         new Window(
@@ -182,35 +184,28 @@ UI::UI(int y, int x)
             pPlayerContainer));
 }
 
-void UI::update_amplitudes(const std::vector<double>& amplitudes_raw)
-{
-    for (auto &barSegment : barSegments)
-        barSegment.clear();
-    double *pAmp;
-    const double *pAmp_raw;
-    int n, i, j, a;
-    for (i = 0, pAmp = amplitudes, pAmp_raw = amplitudes_raw; i < nbars;
-         i++, pAmp++, pAmp_raw++)
-    {
-        *pAmp = std::max<double>(*pAmp_raw / 80 + 1, *pAmp * amplitude_decay);
-        a = round(std::max<double>(0, std::min<double>(*pAmp, 1)) * bar_height);
-        for (auto &barSegment : barSegments)
-        {
-            n = std::min(a, barSegment.height);
-            for (j = 0; j < bar_width; j++)
-            {
-                barSegment.stack_n_vertical(
-                    i * (bar_width + bar_margin) + j,
-                    n);
-            }
-            a -= n;
-            if (a == 0)
-                break;
-        }
-    }
+void UI::set_animation_frames(int n) { Bar::frameCount = n; }
 
-    for (auto &barSegment : barSegments)
-        barSegment.refresh();
+void UI::set_target_amplitudes(const std::array<double, nbars> &amplitudesRaw)
+{
+    auto pAmp = amplitudesRaw.begin();
+    auto pBar = bars.begin();
+    for (; pAmp != amplitudesRaw.end() && pBar != bars.end(); pAmp++, pBar++)
+        pBar->set_target_amplitude(
+            std::round(
+                std::max<double>(
+                    0, std::min<double>(1, *pAmp / 80 + 1)) *
+                bar_height));
+}
+
+void UI::animate_amplitudes()
+{
+    for (auto &segment : barSegments)
+        segment.clear();
+    for (auto &bar : bars)
+        bar.animate();
+    for (auto &segment : barSegments)
+        segment.refresh();
 }
 
 void UI::update_player(const PlaybackInfo *pPlaybackInfo)
@@ -225,6 +220,12 @@ void UI::update_player(const PlaybackInfo *pPlaybackInfo)
     pProgressBar->refresh();
 
     update_time(pTimeCurrent, &pPlaybackInfo->current);
+}
+
+void UI::clear_amplitudes()
+{
+    for (auto &bar : bars)
+        bar.clear();
 }
 
 void UI::update_time(std::unique_ptr<Window> &pWin, const TimeInfo *pTime)
