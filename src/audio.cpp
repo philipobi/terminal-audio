@@ -111,8 +111,9 @@ void AudioBuffer::clear()
     writePos = 0;
 }
 
-FFT::FFT(ma_uint64 N, kiss_fft_scalar *timedata, ma_uint32 sampleRate) : N(N),
-                                                                         timedata(timedata)
+FFT::FFT(ma_uint64 N, fft_numeric *timedata, ma_uint32 sampleRate) : N(N),
+                                                                     timedata(timedata),
+                                                                     amplitudesRaw(nbins, 0)
 {
     windowSum = 0;
     for (ma_uint64 n = 0; n < N; n++)
@@ -143,7 +144,7 @@ void FFT::reduce_spectrum()
     double sum;
     kiss_fft_cpx *pFreq0, *pFreq1;
     i = 0;
-    for (auto& mag : magnitudesRaw)
+    for (auto &amp : amplitudesRaw)
     {
         pFreq0 = frequencyPtrs[i];
         pFreq1 = frequencyPtrs[i + 1];
@@ -151,19 +152,20 @@ void FFT::reduce_spectrum()
         sum = 0;
         while (pFreq0 < pFreq1)
         {
-            sum += 2 * std::hypot(double(pFreq0->r), double(pFreq0->i)) / windowSum;
+            sum += 2 * std::hypot(double(pFreq0->r), double(pFreq0->i)) / (windowSum * SAMPLE_NORM);
             pFreq0++;
         }
         if (n != 0)
             sum /= n;
-        mag = 20 * std::log10(sum + 1e-12);
+        sum = 20 * std::log10(sum + 1e-12);
+        amp = sum;
         i++;
     }
 }
 
 void FFT::compute()
 {
-    apply_windowfunc<kiss_fft_scalar>(timedata, FFT_BUFFER_FRAMES, &hamming);
+    apply_windowfunc<fft_numeric>(timedata, FFT_BUFFER_FRAMES, &hamming);
     kiss_fftr(FFTcfg, timedata, freqdata);
     reduce_spectrum();
 }

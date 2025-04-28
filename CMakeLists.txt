@@ -9,6 +9,7 @@ include(FetchContent)
 
 find_package(Curses REQUIRED)
 
+set(KISSFFT_DATATYPE "float" CACHE BOOL "set fft data type" FORCE)
 set(KISSFFT_STATIC ON CACHE BOOL "build static lib" FORCE)
 set(KISSFFT_TEST OFF CACHE BOOL "dont build tests" FORCE)
 set(KISSFFT_TOOLS OFF CACHE BOOL "dont build tools" FORCE)

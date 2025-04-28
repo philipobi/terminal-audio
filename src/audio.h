@@ -42,20 +42,21 @@ public:
 
 class FFT
 {
-    int frequencies[N_BINS + 1] = BIN_FREQUENCIES;
-    kiss_fft_cpx *frequencyPtrs[N_BINS + 1];
+    static constexpr int nbins = N_BINS;
+    int frequencies[nbins + 1] = BIN_FREQUENCIES;
+    kiss_fft_cpx *frequencyPtrs[nbins + 1];
     kiss_fftr_cfg FFTcfg;
     kiss_fft_cpx *freqdata = NULL;
-    kiss_fft_scalar *timedata;
+    fft_numeric *timedata;
     const ma_uint64 N;
     double windowSum;
     void reduce_spectrum();
 
 public:
     AudioStatus status;
-    std::array<double, N_BINS> magnitudesRaw{0};
+    std::vector<double> amplitudesRaw;
 
-    FFT(ma_uint64 N, kiss_fft_scalar *timedata, ma_uint32 sampleRate);
+    FFT(ma_uint64 N, fft_numeric *timedata, ma_uint32 sampleRate);
     void compute();
     void cleanup();
 };
@@ -86,7 +87,7 @@ class PlaybackHandler
         int n = 1;
         while (n * frameCount < FFT_BUFFER_FRAMES)
             n++;
-        pUI->set_animation_frames(n - 1);
+        pUI->set_animation_frames(n-1);
 
         pBufMain = new AudioBuffer(
             n * frameCount,
@@ -134,22 +135,23 @@ public:
         pBufFFT = new AudioBuffer(
             FFT_BUFFER_FRAMES,
             1,
-            SAMPLE_FORMAT);
+            FFT_FORMAT);
         pBufFFT->seek(0);
 
         auto converterConfig = ma_data_converter_config_init(
             pDecoder->outputFormat,
-            SAMPLE_FORMAT,
+            FFT_FORMAT,
             pDecoder->outputChannels,
             1,
             playbackInfo.sampleRate,
             playbackInfo.sampleRate);
 
         ma_data_converter_init(&converterConfig, NULL, &converter);
+        pConverter = &converter;
 
         pFFT = new FFT(
             FFT_BUFFER_FRAMES,
-            (kiss_fft_scalar *)pBufFFT->ptr,
+            (fft_numeric *)pBufFFT->ptr,
             pDecoder->outputSampleRate);
     }
 
@@ -176,6 +178,7 @@ public:
         playbackInfo.audioFrameCursor = frameTarget;
         compute_time_info(&playbackInfo.audioFrameCursor, &playbackInfo.current);
         clear_buffers();
+        pUI->clear_amplitudes();
     }
 
     void play()
@@ -183,6 +186,7 @@ public:
         if (playbackInfo.end)
         {
             clear_buffers();
+            pUI->clear_amplitudes();
             ma_decoder_seek_to_pcm_frame(pDecoder, 0);
             playbackInfo.end = false;
         }
@@ -260,6 +264,14 @@ public:
             swap_buffers();
 
             pFFT->compute();
+
+            // for (int i = 0; i < pFFT->magnitudesRaw.size(); i++)
+            //     mvwprintw(
+            //         pUI->pContainer->p_win.get(),
+            //         0, 4 * i, "%.0f", pFFT->magnitudesRaw[i]);
+            // pUI->pContainer->refresh();
+
+            pUI->set_target_amplitudes(pFFT->amplitudesRaw);
         }
     }
 };

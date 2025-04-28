@@ -2,7 +2,6 @@
 #include <ncurses.h>
 #include <utility>
 #include <memory>
-#include <array>
 #include <vector>
 
 #include "config.h"
@@ -29,14 +28,16 @@ WINDOW *newwin_rel(const Window *pParent, int nlines, int ncols, int begin_y, in
 
 class Bar
 {
-    static std::vector<Window> &segments;
-    int i_anim, x, amp0 = 0, amp1 = 0;
+    int x,
+        i_anim = 1,
+        amp0 = 0, amp1 = 0,
+        diff = amp1 - amp0;
     void draw(int n);
-    
+
 public:
+    static std::unique_ptr<std::vector<Window>> pSegments;
     static int height, width, frameCount;
-    static void set_segments(std::vector<Window> &segments_);
-    
+
     explicit Bar(int x);
     void set_target_amplitude(int a);
     void animate();
@@ -49,11 +50,11 @@ class UI
         y,
         x;
 
-    static const int
+    static constexpr int
         nbars = N_BINS,
         nsegments = N_SEGMENTS,
         window_margin = 2,
-        bar_height = 10,
+        bar_height = 20,
         bar_width = 2,
         bar_margin = 1,
         win_bars_width = nbars * bar_width + (nbars - 1) * bar_margin,
@@ -62,10 +63,8 @@ class UI
         width = window_margin + win_bars_width + window_margin + win_player_width + window_margin,
         height = window_margin + win_bars_height + window_margin;
 
-    double *amplitudes = NULL;
-
-    std::array<float, nsegments> segment_ratios = {0.2, 0.1, 0.7};
-    std::array<int, nsegments> segment_heights;
+    std::vector<float> segment_ratios = {0.2, 0.1, 0.7};
+    std::vector<int> segment_heights;
     std::vector<Window> barSegments;
     std::vector<Bar> bars;
 
@@ -85,7 +84,7 @@ public:
         pTimeTotal;
     explicit UI(int y, int x);
     void set_animation_frames(int n);
-    void set_target_amplitudes(const std::array<double, nbars> &amplitudesRaw);
+    void set_target_amplitudes(const std::vector<double>& amplitudesRaw);
     void animate_amplitudes();
     void clear_amplitudes();
     void update_player(const PlaybackInfo *pPlaybackInfo);

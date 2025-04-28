@@ -5,6 +5,8 @@
 #include "config.h"
 #include "partition.h"
 #include "utils.h"
+#include <iostream>
+#include <stdio.h>
 
 WINDOW *newwin_rel(const Window *pParent, int nlines, int ncols, int begin_y, int begin_x)
 {
@@ -37,14 +39,17 @@ void Window::stack_n_horizontal(int y, int n, char c, int offset)
         mvwaddch(p_win.get(), y, x, c);
 }
 
-void Bar::set_segments(std::vector<Window> &segments_) { segments = segments_; }
+std::unique_ptr<std::vector<Window>> Bar::pSegments = NULL;
+int Bar::height = 0;
+int Bar::width = 0;
+int Bar::frameCount = 0;
 
 Bar::Bar(int x) : x(x) {}
 
 void Bar::draw(int n)
 {
     int i, j, n1;
-    for (auto &segment : segments)
+    for (auto &segment : *pSegments)
     {
         n1 = std::min(n, segment.height);
         for (i = 1; i <= n1; i++)
@@ -65,14 +70,14 @@ void Bar::set_target_amplitude(int a)
     i_anim = 1;
     amp0 = amp1;
     amp1 = a;
+    diff = amp1 - amp0;
 }
 
 void Bar::animate()
 {
     draw(
         std::round(
-            amp0 + (amp1 - amp0) *
-                       std::min<float>(float(i_anim) / frameCount, 1)));
+            amp0 + diff * std::min<float>(std::sqrt(float(i_anim) / frameCount), 1)));
     ++i_anim;
 }
 
@@ -83,7 +88,7 @@ void Bar::clear()
 }
 
 UI::UI(int y, int x)
-    : y(y), x(x), amplitudes(new double[nbars]{0})
+    : y(y), x(x), segment_heights(nbars, 0)
 {
 
     pContainer = std::unique_ptr<Window>(
@@ -133,7 +138,8 @@ UI::UI(int y, int x)
 
     Bar::height = bar_height;
     Bar::width = bar_width;
-    Bar::set_segments(barSegments);
+    Bar::pSegments = std::unique_ptr<std::vector<Window>>(&barSegments);
+
     for (int i = 0; i < nbars; i++)
         bars.emplace_back(i * (bar_width + bar_margin));
 
@@ -186,16 +192,32 @@ UI::UI(int y, int x)
 
 void UI::set_animation_frames(int n) { Bar::frameCount = n; }
 
-void UI::set_target_amplitudes(const std::array<double, nbars> &amplitudesRaw)
+void UI::set_target_amplitudes(const std::vector<double> &amplitudesRaw)
 {
     auto pAmp = amplitudesRaw.begin();
     auto pBar = bars.begin();
+    int i = 0;
+    double a;
+    move(0, 0);
+    clrtoeol();
+    move(1, 0);
+    clrtoeol();
+    move(2, 0);
+    clrtoeol();
+
     for (; pAmp != amplitudesRaw.end() && pBar != bars.end(); pAmp++, pBar++)
-        pBar->set_target_amplitude(
-            std::round(
-                std::max<double>(
-                    0, std::min<double>(1, *pAmp / 80 + 1)) *
-                bar_height));
+    {
+        mvprintw(0, i * 8, "%+3.0f", *pAmp);
+        a = *pAmp / 100 + 1;
+        if (a > 1)
+            a = 1;
+        else if (a < 0)
+            a = 0;
+        pBar->set_target_amplitude(std::round(a * bar_height));
+        i++;
+    }
+
+    refresh();
 }
 
 void UI::animate_amplitudes()
