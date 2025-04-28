@@ -7,6 +7,11 @@
 #include "utils.h"
 #include "config.h"
 
+template <class T>
+void adjust_vol(void *buf, ma_uint64 N, float vol);
+
+void adjust_vol_null(void *buf, ma_uint64 N, float vol);
+
 enum AudioStatus
 {
     SUCCESS,
@@ -21,6 +26,10 @@ void print_audio_status(AudioStatus status);
 
 class AudioBuffer
 {
+public:
+    ma_uint64 len;
+
+private:
     ma_uint32 Bps;
     void *const buf = NULL;
 
@@ -63,6 +72,7 @@ public:
 
 class PlaybackHandler
 {
+    float vol;
     AudioBuffer
         *pBufMain,
         *pBufPlayback,
@@ -81,13 +91,14 @@ class PlaybackHandler
     UI *pUI;
     PlaybackInfo playbackInfo;
     bool allocated = false;
+    void (*p_adjust_vol)(void *buf, ma_uint64 N, float vol);
 
     void alloc_playback(ma_uint64 frameCount)
     {
         int n = 1;
         while (n * frameCount < FFT_BUFFER_FRAMES)
             n++;
-        pUI->set_animation_frames(n-1);
+        pUI->set_animation_frames(n - 1);
 
         pBufMain = new AudioBuffer(
             n * frameCount,
@@ -123,10 +134,15 @@ class PlaybackHandler
         pBufMain->readPos = 0;
         pBufPlayback->writePos = 0;
         swap_ptr(pBufMain, pBufPlayback, tmp);
+        if (vol != 1.0)
+        {
+            pBufPlayback->seek(0);
+            (*p_adjust_vol)(pBufPlayback->ptr, pBufPlayback->len, vol);
+        }
     }
 
 public:
-    PlaybackHandler(ma_decoder *pDecoder, UI *pUI) : pDecoder(pDecoder), pUI(pUI)
+    PlaybackHandler(ma_decoder *pDecoder, UI *pUI, float vol = 0.5) : pDecoder(pDecoder), pUI(pUI), vol(vol)
     {
         ma_decoder_get_length_in_pcm_frames(pDecoder, &playbackInfo.audioFrameSize);
         playbackInfo.sampleRate = pDecoder->outputSampleRate;
@@ -153,6 +169,25 @@ public:
             FFT_BUFFER_FRAMES,
             (fft_numeric *)pBufFFT->ptr,
             pDecoder->outputSampleRate);
+
+        switch (pDecoder->outputFormat)
+        {
+        case ma_format_f32:
+            p_adjust_vol = &adjust_vol<float>;
+            break;
+        case ma_format_s16:
+            p_adjust_vol = &adjust_vol<int16_t>;
+            break;
+        case ma_format_s32:
+            p_adjust_vol = &adjust_vol<int32_t>;
+            break;
+        case ma_format_u8:
+            p_adjust_vol = &adjust_vol<uint8_t>;
+            break;
+        default:
+            p_adjust_vol = &adjust_vol_null;
+            break;
+        }
     }
 
     void move_playback_cursor(ma_uint8 s, bool forward)
@@ -264,12 +299,6 @@ public:
             swap_buffers();
 
             pFFT->compute();
-
-            // for (int i = 0; i < pFFT->magnitudesRaw.size(); i++)
-            //     mvwprintw(
-            //         pUI->pContainer->p_win.get(),
-            //         0, 4 * i, "%.0f", pFFT->magnitudesRaw[i]);
-            // pUI->pContainer->refresh();
 
             pUI->set_target_amplitudes(pFFT->amplitudesRaw);
         }

@@ -207,7 +207,6 @@ void UI::set_target_amplitudes(const std::vector<double> &amplitudesRaw)
 
     for (; pAmp != amplitudesRaw.end() && pBar != bars.end(); pAmp++, pBar++)
     {
-        mvprintw(0, i * 8, "%+3.0f", *pAmp);
         a = *pAmp / 100 + 1;
         if (a > 1)
             a = 1;

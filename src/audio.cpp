@@ -7,6 +7,16 @@
 #include <mutex>
 #include <iostream>
 
+template <class T>
+void adjust_vol(void *buf, ma_uint64 N, float vol){
+    auto pData = (T *)buf;
+    for (ma_uint64 i = 0; i<N; i++){
+        *pData++ *= vol;
+    }
+}
+
+void adjust_vol_null(void *buf, ma_uint64 N, float vol){}
+
 float a0 = 0.53836, a1 = 1 - a0;
 
 double hamming(ma_uint64 n, ma_uint64 N)
@@ -65,11 +75,12 @@ AudioBuffer::AudioBuffer(ma_uint64 frameSize, ma_uint32 channels,
                          ma_format format)
     : frameSize(frameSize),
       channels(channels),
+      len(frameSize * channels),
       format(format),
       writePos(0),
       readPos(0),
       Bps(ma_get_bytes_per_sample(format)),
-      buf(malloc(frameSize * channels * Bps))
+      buf(malloc(len * Bps))
 {
     status = buf == NULL ? ERR_INIT_BUF : SUCCESS;
 }
