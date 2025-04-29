@@ -1,11 +1,14 @@
 #pragma once
 #include <stdlib.h>
 #include <cmath>
+#include <memory>
 #include "miniaudio.h"
 #include "frontend.h"
 #include "kiss_fftr.h"
 #include "utils.h"
 #include "config.h"
+
+void data_converter_uninit(void *pConv);
 
 template <class T>
 void adjust_vol(void *buf, ma_uint64 N, float vol);
@@ -26,12 +29,9 @@ void print_audio_status(AudioStatus status);
 
 class AudioBuffer
 {
-public:
-    ma_uint64 len;
-
 private:
     ma_uint32 Bps;
-    void *const buf = NULL;
+    std::unique_ptr<void, void (*)(void *)> buf;
 
 public:
     void *ptr = NULL;
@@ -39,8 +39,7 @@ public:
     ma_uint64 frameSize, writePos, readPos;
     ma_format format;
     AudioStatus status;
-    AudioBuffer(ma_uint64 frameSize, ma_uint32 channels, ma_format format);
-    ~AudioBuffer();
+    explicit AudioBuffer(ma_uint64 frameSize, ma_uint32 channels, ma_format format);
     void seek(ma_uint64 framePos);
     bool empty();
     bool full();
@@ -54,8 +53,8 @@ class FFT
     static constexpr int nbins = N_BINS;
     int frequencies[nbins + 1] = BIN_FREQUENCIES;
     kiss_fft_cpx *frequencyPtrs[nbins + 1];
-    kiss_fftr_cfg FFTcfg;
-    kiss_fft_cpx *freqdata = NULL;
+    std::unique_ptr<kiss_fftr_state, void (*)(void *)> FFTcfg;
+    std::unique_ptr<kiss_fft_cpx> freqdata;
     fft_numeric *timedata;
     const ma_uint64 N;
     double windowSum;
@@ -67,28 +66,29 @@ public:
 
     FFT(ma_uint64 N, fft_numeric *timedata, ma_uint32 sampleRate);
     void compute();
-    void cleanup();
 };
 
 class PlaybackHandler
 {
     float vol;
-    AudioBuffer
-        *pBufMain,
-        *pBufPlayback,
-        *pBufFFT,
-        *tmp;
-    ma_decoder *pDecoder;
-    ma_data_converter converter, *pConverter;
+
+    std::unique_ptr<AudioBuffer>
+        pBufMain,
+        pBufPlayback,
+        pBufFFT;
+
+    std::unique_ptr<ma_decoder, ma_result (*)(ma_decoder *)> &pDecoder;
+    ma_data_converter converter;
+    std::unique_ptr<ma_data_converter, void (*)(void *)> pConverter;
     ma_uint64
         framesRead,
         framesWrite,
         framePosSec,
         frameTarget,
         offsetFFT;
-    FFT *pFFT;
+    std::unique_ptr<FFT> pFFT;
     ma_result decoderStatus;
-    UI *pUI;
+    UI &ui;
     PlaybackInfo playbackInfo;
     bool allocated = false;
     void (*p_adjust_vol)(void *buf, ma_uint64 N, float vol);
@@ -98,16 +98,18 @@ class PlaybackHandler
         int n = 1;
         while (n * frameCount < FFT_BUFFER_FRAMES)
             n++;
-        pUI->set_animation_frames(n - 1);
+        ui.set_animation_frames(n - 1);
 
-        pBufMain = new AudioBuffer(
-            n * frameCount,
-            pDecoder->outputChannels,
-            pDecoder->outputFormat);
-        pBufPlayback = new AudioBuffer(
-            n * frameCount,
-            pDecoder->outputChannels,
-            pDecoder->outputFormat);
+        pBufMain = std::unique_ptr<AudioBuffer>(
+            new AudioBuffer(
+                n * frameCount,
+                pDecoder->outputChannels,
+                pDecoder->outputFormat));
+        pBufPlayback = std::unique_ptr<AudioBuffer>(
+            new AudioBuffer(
+                n * frameCount,
+                pDecoder->outputChannels,
+                pDecoder->outputFormat));
 
         offsetFFT = n * frameCount - FFT_BUFFER_FRAMES;
         allocated = true;
@@ -131,28 +133,37 @@ class PlaybackHandler
 
     void swap_buffers()
     {
-        pBufMain->readPos = 0;
-        pBufPlayback->writePos = 0;
-        swap_ptr(pBufMain, pBufPlayback, tmp);
+        std::swap(pBufMain, pBufPlayback);
+        pBufMain->writePos = 0;
+        pBufPlayback->readPos = 0;
         if (vol != 1.0)
         {
             pBufPlayback->seek(0);
-            (*p_adjust_vol)(pBufPlayback->ptr, pBufPlayback->len, vol);
+            (*p_adjust_vol)(pBufPlayback->ptr, pBufPlayback->writePos * pBufPlayback->channels, vol);
         }
     }
 
 public:
-    PlaybackHandler(ma_decoder *pDecoder, UI *pUI, float vol = 0.5) : pDecoder(pDecoder), pUI(pUI), vol(vol)
+    AudioStatus status;
+    PlaybackHandler(
+        std::unique_ptr<ma_decoder, ma_result (*)(ma_decoder *)> &pDecoder,
+        UI &ui,
+        float vol) : pDecoder(pDecoder),
+                     ui(ui),
+                     vol(vol),
+                     pBufFFT(new AudioBuffer(
+                         FFT_BUFFER_FRAMES,
+                         1,
+                         FFT_FORMAT)),
+                     pFFT(new FFT(
+                         FFT_BUFFER_FRAMES,
+                         (fft_numeric *)pBufFFT->ptr,
+                         pDecoder->outputSampleRate)),
+                     pConverter(NULL, &data_converter_uninit)
     {
-        ma_decoder_get_length_in_pcm_frames(pDecoder, &playbackInfo.audioFrameSize);
+        ma_decoder_get_length_in_pcm_frames(pDecoder.get(), &playbackInfo.audioFrameSize);
         playbackInfo.sampleRate = pDecoder->outputSampleRate;
         compute_time_info(&playbackInfo.audioFrameSize, &playbackInfo.duration);
-
-        pBufFFT = new AudioBuffer(
-            FFT_BUFFER_FRAMES,
-            1,
-            FFT_FORMAT);
-        pBufFFT->seek(0);
 
         auto converterConfig = ma_data_converter_config_init(
             pDecoder->outputFormat,
@@ -162,13 +173,8 @@ public:
             playbackInfo.sampleRate,
             playbackInfo.sampleRate);
 
-        ma_data_converter_init(&converterConfig, NULL, &converter);
-        pConverter = &converter;
-
-        pFFT = new FFT(
-            FFT_BUFFER_FRAMES,
-            (fft_numeric *)pBufFFT->ptr,
-            pDecoder->outputSampleRate);
+        if ((status = ma_data_converter_init(&converterConfig, NULL, &converter) == MA_SUCCESS ? SUCCESS : ERR_INIT_CONV) == SUCCESS)
+            pConverter = std::unique_ptr<ma_data_converter, void (*)(void *)>(&converter, &data_converter_uninit);
 
         switch (pDecoder->outputFormat)
         {
@@ -206,14 +212,14 @@ public:
             else
                 frameTarget = playbackInfo.audioFrameCursor - frameTarget;
         }
-        decoderStatus = ma_decoder_seek_to_pcm_frame(pDecoder, frameTarget);
+        decoderStatus = ma_decoder_seek_to_pcm_frame(pDecoder.get(), frameTarget);
         if (decoderStatus != MA_SUCCESS)
             return;
         playbackInfo.end = false;
         playbackInfo.audioFrameCursor = frameTarget;
         compute_time_info(&playbackInfo.audioFrameCursor, &playbackInfo.current);
         clear_buffers();
-        pUI->clear_amplitudes();
+        ui.clear_amplitudes();
     }
 
     void play()
@@ -221,8 +227,8 @@ public:
         if (playbackInfo.end)
         {
             clear_buffers();
-            pUI->clear_amplitudes();
-            ma_decoder_seek_to_pcm_frame(pDecoder, 0);
+            ui.clear_amplitudes();
+            ma_decoder_seek_to_pcm_frame(pDecoder.get(), 0);
             playbackInfo.end = false;
         }
         playbackInfo.playing = true;
@@ -238,12 +244,21 @@ public:
             play();
     }
 
+    void stop() {
+        playbackInfo.stop = true;
+    }
+    
     void callback(ma_uint64 frameCount, void *pOutput)
     {
+        std::unique_lock<std::mutex> lck(mtx);
         if (!allocated)
             alloc_playback(frameCount);
-        if (!playbackInfo.playing)
+
+        if (playbackInfo.stop)
             return;
+
+        while (!playbackInfo.playing)
+            cv.wait(lck);
 
         if (!pBufPlayback->empty())
         {
@@ -260,7 +275,7 @@ public:
 
             playbackInfo.audioFrameCursor += framesRead;
             compute_time_info(&playbackInfo.audioFrameCursor, &playbackInfo.current);
-            pUI->animate_amplitudes();
+            ui.animate_amplitudes();
         }
         else if (pBufPlayback->empty() && playbackInfo.end)
         {
@@ -273,7 +288,7 @@ public:
         framesWrite = frameCount;
         pBufMain->request_write(&framesWrite);
         decoderStatus = ma_decoder_read_pcm_frames(
-            pDecoder,
+            pDecoder.get(),
             pBufMain->ptr,
             framesWrite,
             &framesRead);
@@ -291,7 +306,7 @@ public:
             framesRead = framesWrite = FFT_BUFFER_FRAMES;
             pBufMain->seek(offsetFFT);
             ma_data_converter_process_pcm_frames(
-                pConverter,
+                pConverter.get(),
                 pBufMain->ptr,
                 &framesRead,
                 pBufFFT->ptr,
@@ -300,24 +315,26 @@ public:
 
             pFFT->compute();
 
-            pUI->set_target_amplitudes(pFFT->amplitudesRaw);
+            ui.set_target_amplitudes(pFFT->amplitudesRaw);
         }
     }
 };
 
 class Player
 {
-    ma_device device, *pDevice = NULL;
-    ma_decoder decoder, *pDecoder = NULL;
-    PlaybackHandler
-        *pPlaybackHandler = NULL,
-        **ppPlaybackHandler = &pPlaybackHandler;
+    PlaybackHandler *pPlaybackHandler_;
+
+    ma_device device;
+    std::unique_ptr<ma_device, void (*)(ma_device *)> pDevice;
+    ma_decoder decoder;
+    std::unique_ptr<ma_decoder, ma_result (*)(ma_decoder *)> pDecoder;
+    std::unique_ptr<PlaybackHandler> pPlaybackHandler;
 
 public:
     enum AudioStatus status;
-    Player(const char *filePath, UI *pUI);
+    Player(const char *filePath, UI &ui, float vol = 0.2);
     void toggle_play_pause();
     void play();
+    void stop();
     void move_playback_cursor(ma_uint8 s, bool forward);
-    void cleanup();
 };

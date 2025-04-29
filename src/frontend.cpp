@@ -39,7 +39,7 @@ void Window::stack_n_horizontal(int y, int n, char c, int offset)
         mvwaddch(p_win.get(), y, x, c);
 }
 
-std::unique_ptr<std::vector<Window>> Bar::pSegments = NULL;
+std::vector<Window> * Bar::pSegments = NULL;
 int Bar::height = 0;
 int Bar::width = 0;
 int Bar::frameCount = 0;
@@ -138,7 +138,7 @@ UI::UI(int y, int x)
 
     Bar::height = bar_height;
     Bar::width = bar_width;
-    Bar::pSegments = std::unique_ptr<std::vector<Window>>(&barSegments);
+    Bar::pSegments = &barSegments;
 
     for (int i = 0; i < nbars; i++)
         bars.emplace_back(i * (bar_width + bar_margin));

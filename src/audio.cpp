@@ -7,15 +7,27 @@
 #include <mutex>
 #include <iostream>
 
+void data_converter_uninit(void *pConv)
+{
+    ma_data_converter_uninit((ma_data_converter *)pConv, NULL);
+}
+
+void device_uninit(ma_device *pDevice){
+    ma_device_stop(pDevice);
+    ma_device_uninit(pDevice);
+}
+
 template <class T>
-void adjust_vol(void *buf, ma_uint64 N, float vol){
+void adjust_vol(void *buf, ma_uint64 N, float vol)
+{
     auto pData = (T *)buf;
-    for (ma_uint64 i = 0; i<N; i++){
+    for (ma_uint64 i = 0; i < N; i++)
+    {
         *pData++ *= vol;
     }
 }
 
-void adjust_vol_null(void *buf, ma_uint64 N, float vol){}
+void adjust_vol_null(void *buf, ma_uint64 N, float vol) {}
 
 float a0 = 0.53836, a1 = 1 - a0;
 
@@ -36,7 +48,6 @@ void apply_windowfunc(T *pData, ma_uint64 N,
 void playback_data_callback(ma_device *pDevice, void *pOutput,
                             const void *pInput, ma_uint32 frameCount)
 {
-    std::lock_guard<std::mutex> lck(syncPlayback);
     (*((PlaybackHandler **)(pDevice->pUserData)))->callback(frameCount, pOutput);
 }
 
@@ -75,21 +86,19 @@ AudioBuffer::AudioBuffer(ma_uint64 frameSize, ma_uint32 channels,
                          ma_format format)
     : frameSize(frameSize),
       channels(channels),
-      len(frameSize * channels),
       format(format),
       writePos(0),
       readPos(0),
       Bps(ma_get_bytes_per_sample(format)),
-      buf(malloc(len * Bps))
+      buf(malloc(frameSize * channels * Bps), &free)
 {
-    status = buf == NULL ? ERR_INIT_BUF : SUCCESS;
+    seek(0);
+    status = buf ? SUCCESS : ERR_INIT_BUF;
 }
-
-AudioBuffer::~AudioBuffer() { free(buf); }
 
 void AudioBuffer::seek(ma_uint64 framePos)
 {
-    ptr = (char *)buf + framePos * channels * Bps;
+    ptr = (char *)buf.get() + framePos * channels * Bps;
 }
 
 void AudioBuffer::request_write(ma_uint64 *pFrameCount)
@@ -124,29 +133,22 @@ void AudioBuffer::clear()
 
 FFT::FFT(ma_uint64 N, fft_numeric *timedata, ma_uint32 sampleRate) : N(N),
                                                                      timedata(timedata),
-                                                                     amplitudesRaw(nbins, 0)
+                                                                     amplitudesRaw(nbins, 0),
+                                                                     freqdata(new kiss_fft_cpx[N]),
+                                                                     FFTcfg(kiss_fftr_alloc(N, 0, NULL, NULL), &kiss_fftr_free)
 {
     windowSum = 0;
     for (ma_uint64 n = 0; n < N; n++)
         windowSum += hamming(n, N);
 
-    FFTcfg = kiss_fftr_alloc(N, 0, NULL, NULL);
-
-    freqdata = new kiss_fft_cpx[N];
-    kiss_fft_cpx **ppFreq, *pEnd = freqdata + N / 2;
+    kiss_fft_cpx **ppFreq, *pEnd = freqdata.get() + N / 2;
     int i;
     for (i = 0, ppFreq = frequencyPtrs; i < N_BINS + 1; i++, ppFreq++)
     {
-        *ppFreq = freqdata + frequencies[i] * N / sampleRate;
+        *ppFreq = freqdata.get() + frequencies[i] * N / sampleRate;
         if (*ppFreq > pEnd)
             *ppFreq = pEnd;
     }
-}
-
-void FFT::cleanup()
-{
-    kiss_fftr_free(FFTcfg);
-    delete[] freqdata;
 }
 
 void FFT::reduce_spectrum()
@@ -177,15 +179,16 @@ void FFT::reduce_spectrum()
 void FFT::compute()
 {
     apply_windowfunc<fft_numeric>(timedata, FFT_BUFFER_FRAMES, &hamming);
-    kiss_fftr(FFTcfg, timedata, freqdata);
+    kiss_fftr(FFTcfg.get(), timedata, freqdata.get());
     reduce_spectrum();
 }
 
-Player::Player(const char *filePath, UI *pUI)
+Player::Player(const char *filePath, UI &ui, float vol) : pDevice(NULL, &ma_device_uninit),
+                                                          pDecoder(NULL, &ma_decoder_uninit)
 {
     auto deviceConfig = ma_device_config_init(ma_device_type_playback);
     deviceConfig.dataCallback = playback_data_callback;
-    deviceConfig.pUserData = ppPlaybackHandler;
+    deviceConfig.pUserData = &pPlaybackHandler_;
 
     ma_decoder_config decoderConfig;
 
@@ -202,14 +205,15 @@ Player::Player(const char *filePath, UI *pUI)
         ) &&
         (status = ma_decoder_init_file(filePath, &decoderConfig, &decoder) == MA_SUCCESS ? SUCCESS : ERR_INIT_DECODER) == SUCCESS &&
         (
-            pPlaybackHandler = new PlaybackHandler(&decoder, pUI),
+            pDevice = std::unique_ptr<ma_device, void (*)(ma_device *)>(&device, &device_uninit),
+            pDecoder = std::unique_ptr<ma_decoder, ma_result(*)(ma_decoder *)>(&decoder, &ma_decoder_uninit),
+            pPlaybackHandler = std::unique_ptr<PlaybackHandler>(new PlaybackHandler(pDecoder, ui, vol)),
             true
         )
     ) {
         // clang-format on
-        pDevice = &device;
-        pDecoder = &decoder;
-        ma_device_start(pDevice);
+        pPlaybackHandler_ = pPlaybackHandler.get();
+        ma_device_start(pDevice.get());
     }
 }
 
@@ -217,13 +221,6 @@ void Player::toggle_play_pause() { pPlaybackHandler->toggle_play_pause(); }
 
 void Player::play() { pPlaybackHandler->play(); }
 
-void Player::move_playback_cursor(ma_uint8 s, bool forward) { pPlaybackHandler->move_playback_cursor(s, forward); }
+void Player::stop() { pPlaybackHandler->stop(); }
 
-void Player::cleanup()
-{
-    std::lock_guard<std::mutex> lck(syncPlayback);
-    pPlaybackHandler->pause();
-    ma_device_uninit(pDevice);
-    ma_decoder_uninit(pDecoder);
-    delete pPlaybackHandler;
-}
+void Player::move_playback_cursor(ma_uint8 s, bool forward) { pPlaybackHandler->move_playback_cursor(s, forward); }

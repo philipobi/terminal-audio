@@ -35,7 +35,7 @@ class Bar
     void draw(int n);
 
 public:
-    static std::unique_ptr<std::vector<Window>> pSegments;
+    static std::vector<Window> *pSegments;
     static int height, width, frameCount;
 
     explicit Bar(int x);

@@ -17,7 +17,8 @@ struct PlaybackInfo
 {
     bool
         playing = false,
-        end = false;
+        end = false,
+        stop = false;
     ma_uint64
         sampleRate,
         audioFrameCursor = 0,
@@ -28,4 +29,6 @@ struct PlaybackInfo
 };
 
 #include <mutex>
-extern std::mutex syncPlayback;
+#include <condition_variable>
+extern std::mutex mtx;
+extern std::condition_variable cv;
