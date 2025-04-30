@@ -54,13 +54,13 @@ class UI
         nbars = N_BINS,
         nsegments = N_SEGMENTS,
         window_margin = 2,
-        bar_height = 20,
+        bar_height = 10,
         bar_width = 2,
         bar_margin = 1,
         win_bars_width = nbars * bar_width + (nbars - 1) * bar_margin,
         win_bars_height = bar_height + 1,
         win_player_width = 20,
-        width = window_margin + win_bars_width + window_margin + win_player_width + window_margin,
+        width = window_margin + win_bars_width + 2 * window_margin + win_player_width + window_margin,
         height = window_margin + win_bars_height + window_margin;
 
     std::vector<float> segment_ratios = {0.2, 0.1, 0.7};
@@ -75,18 +75,21 @@ class UI
         pBarsContainer,
         pFooter,
         pPlayerContainer,
-        pProgressBar;
+        pProgressBar,
+        pTimeCurrent,
+        pTimeDuration,
+        pFilenameDisplay;
+
+    void update_time(std::unique_ptr<Window> &pWin, const TimeInfo *pTime);
 
 public:
-    std::unique_ptr<Window>
-        pContainer,
-        pTimeCurrent,
-        pTimeTotal;
-    explicit UI(int y, int x);
+    std::unique_ptr<Window> pContainer;
+        
+    explicit UI(int y, int x, const std::string &fname);
     void set_animation_frames(int n);
-    void set_target_amplitudes(const std::vector<double>& amplitudesRaw);
+    void set_target_amplitudes(const std::vector<double> &amplitudesRaw);
     void animate_amplitudes();
     void clear_amplitudes();
     void update_player(const PlaybackInfo *pPlaybackInfo);
-    void update_time(std::unique_ptr<Window> &pWin, const TimeInfo *pTime);
+    void set_duration(const TimeInfo *pTime);
 };

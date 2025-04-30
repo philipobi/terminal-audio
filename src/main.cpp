@@ -1,19 +1,14 @@
 #include <ncurses.h>
 #include <vector>
-#include <cmath>
 #include <mutex>
-#include <condition_variable>
 #include <filesystem>
 #include <string>
-#include <thread>
-#include <chrono>
 #include <iostream>
 #include "frontend.h"
 #include "audio.h"
 #include "utils.h"
 
 std::mutex mtx;
-std::condition_variable cv;
 
 int main(int argc, const char **argv)
 {
@@ -35,11 +30,12 @@ int main(int argc, const char **argv)
     curs_set(0);
 
     {
-        auto ui = UI(5, 5);
+        std::string fname = std::filesystem::path(argv[1]).filename().string();
+        
+        auto ui = UI(2, 2, fname);
         std::unique_ptr<Window> &pContainer = ui.pContainer;
         keypad(pContainer->p_win.get(), true);
 
-        std::string fname = std::filesystem::path(argv[1]).replace_extension("").filename().string();
 
         std::unique_lock<std::mutex> lck(mtx);
 
@@ -57,13 +53,15 @@ int main(int argc, const char **argv)
                 {
                 case 'p':
                     lck.lock();
-                    p.toggle_play_pause();
-                    cv.notify_one();
+                    if (p.playing())
+                        p.pause();
+                    else
+                        p.play();
                     lck.unlock();
                     break;
                 case 'q':
                     lck.lock();
-                    p.stop();
+                    p.pause();
                     run_loop = false;
                     lck.unlock();
                     break;

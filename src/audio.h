@@ -7,6 +7,8 @@
 #include "kiss_fftr.h"
 #include "utils.h"
 #include "config.h"
+#include <thread>
+#include <chrono>
 
 void data_converter_uninit(void *pConv);
 
@@ -89,7 +91,6 @@ class PlaybackHandler
     std::unique_ptr<FFT> pFFT;
     ma_result decoderStatus;
     UI &ui;
-    PlaybackInfo playbackInfo;
     bool allocated = false;
     void (*p_adjust_vol)(void *buf, ma_uint64 N, float vol);
 
@@ -144,6 +145,7 @@ class PlaybackHandler
     }
 
 public:
+    PlaybackInfo playbackInfo;
     AudioStatus status;
     PlaybackHandler(
         std::unique_ptr<ma_decoder, ma_result (*)(ma_decoder *)> &pDecoder,
@@ -164,6 +166,7 @@ public:
         ma_decoder_get_length_in_pcm_frames(pDecoder.get(), &playbackInfo.audioFrameSize);
         playbackInfo.sampleRate = pDecoder->outputSampleRate;
         compute_time_info(&playbackInfo.audioFrameSize, &playbackInfo.duration);
+        ui.set_duration(&playbackInfo.duration);
 
         auto converterConfig = ma_data_converter_config_init(
             pDecoder->outputFormat,
@@ -218,6 +221,7 @@ public:
         playbackInfo.end = false;
         playbackInfo.audioFrameCursor = frameTarget;
         compute_time_info(&playbackInfo.audioFrameCursor, &playbackInfo.current);
+        ui.update_player(&playbackInfo);
         clear_buffers();
         ui.clear_amplitudes();
     }
@@ -230,35 +234,22 @@ public:
             ui.clear_amplitudes();
             ma_decoder_seek_to_pcm_frame(pDecoder.get(), 0);
             playbackInfo.end = false;
+            playbackInfo.audioFrameCursor = 0;
         }
         playbackInfo.playing = true;
     }
 
     void pause() { playbackInfo.playing = false; }
 
-    void toggle_play_pause()
-    {
-        if (playbackInfo.playing)
-            pause();
-        else
-            play();
-    }
-
-    void stop() {
-        playbackInfo.stop = true;
-    }
-    
     void callback(ma_uint64 frameCount, void *pOutput)
     {
-        std::unique_lock<std::mutex> lck(mtx);
+        std::lock_guard<std::mutex> lck(mtx);
+
         if (!allocated)
             alloc_playback(frameCount);
 
-        if (playbackInfo.stop)
+        if (!playbackInfo.playing)
             return;
-
-        while (!playbackInfo.playing)
-            cv.wait(lck);
 
         if (!pBufPlayback->empty())
         {
@@ -275,11 +266,14 @@ public:
 
             playbackInfo.audioFrameCursor += framesRead;
             compute_time_info(&playbackInfo.audioFrameCursor, &playbackInfo.current);
+            ui.update_player(&playbackInfo);
             ui.animate_amplitudes();
         }
-        else if (pBufPlayback->empty() && playbackInfo.end)
+        else if (playbackInfo.end)
         {
             playbackInfo.playing = false;
+            ui.clear_amplitudes();
+            ui.animate_amplitudes();
         }
 
         if (playbackInfo.end)
@@ -333,8 +327,8 @@ class Player
 public:
     enum AudioStatus status;
     Player(const char *filePath, UI &ui, float vol = 0.2);
-    void toggle_play_pause();
+    bool playing();
     void play();
-    void stop();
+    void pause();
     void move_playback_cursor(ma_uint8 s, bool forward);
 };

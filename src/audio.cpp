@@ -129,6 +129,7 @@ void AudioBuffer::clear()
 {
     readPos = 0;
     writePos = 0;
+    seek(0);
 }
 
 FFT::FFT(ma_uint64 N, fft_numeric *timedata, ma_uint32 sampleRate) : N(N),
@@ -217,10 +218,14 @@ Player::Player(const char *filePath, UI &ui, float vol) : pDevice(NULL, &ma_devi
     }
 }
 
-void Player::toggle_play_pause() { pPlaybackHandler->toggle_play_pause(); }
+bool Player::playing() { return pPlaybackHandler->playbackInfo.playing; }
 
 void Player::play() { pPlaybackHandler->play(); }
 
-void Player::stop() { pPlaybackHandler->stop(); }
+void Player::pause() { pPlaybackHandler->pause(); }
 
-void Player::move_playback_cursor(ma_uint8 s, bool forward) { pPlaybackHandler->move_playback_cursor(s, forward); }
+void Player::move_playback_cursor(ma_uint8 s, bool forward) { 
+    ma_device_stop(pDevice.get());
+    pPlaybackHandler->move_playback_cursor(s, forward); 
+    ma_device_start(pDevice.get());
+}

@@ -17,8 +17,7 @@ struct PlaybackInfo
 {
     bool
         playing = false,
-        end = false,
-        stop = false;
+        end = false;
     ma_uint64
         sampleRate,
         audioFrameCursor = 0,

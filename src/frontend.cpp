@@ -39,7 +39,7 @@ void Window::stack_n_horizontal(int y, int n, char c, int offset)
         mvwaddch(p_win.get(), y, x, c);
 }
 
-std::vector<Window> * Bar::pSegments = NULL;
+std::vector<Window> *Bar::pSegments = NULL;
 int Bar::height = 0;
 int Bar::width = 0;
 int Bar::frameCount = 0;
@@ -87,7 +87,7 @@ void Bar::clear()
     set_target_amplitude(0);
 }
 
-UI::UI(int y, int x)
+UI::UI(int y, int x, const std::string &fname)
     : y(y), x(x), segment_heights(nbars, 0)
 {
 
@@ -114,7 +114,7 @@ UI::UI(int y, int x)
             win_bars_height,
             win_player_width,
             window_margin,
-            window_margin + win_bars_width + window_margin,
+            window_margin + win_bars_width + 2 * window_margin,
             pContainer));
 
     // create bars
@@ -165,6 +165,34 @@ UI::UI(int y, int x)
         segment.set_color(i++);
 
     // create playback status elements
+    pFilenameDisplay = std::unique_ptr<Window>(
+        new Window(
+            1,
+            win_player_width,
+            pPlayerContainer->height / 2 - 1,
+            0,
+            pPlayerContainer));
+    
+    auto len_s = fname.length();
+    auto width_d = pFilenameDisplay->width;
+    
+    if(len_s > width_d)
+        mvwprintw(
+            pFilenameDisplay->p_win.get(),
+            0,
+            0,
+            "%s...",
+            fname.substr(0, pFilenameDisplay->width - 3).c_str()
+        );
+    else
+        mvwprintw(
+            pFilenameDisplay->p_win.get(),
+            0,
+            (width_d - len_s)/2,
+            fname.c_str()
+        );
+    pFilenameDisplay->refresh();
+
     pProgressBar = std::unique_ptr<Window>(
         new Window(
             1,
@@ -181,7 +209,7 @@ UI::UI(int y, int x)
             pPlayerContainer->height / 2 + 1,
             0,
             pPlayerContainer));
-    pTimeTotal = std::unique_ptr<Window>(
+    pTimeDuration = std::unique_ptr<Window>(
         new Window(
             1,
             time_width,
@@ -198,12 +226,6 @@ void UI::set_target_amplitudes(const std::vector<double> &amplitudesRaw)
     auto pBar = bars.begin();
     int i = 0;
     double a;
-    move(0, 0);
-    clrtoeol();
-    move(1, 0);
-    clrtoeol();
-    move(2, 0);
-    clrtoeol();
 
     for (; pAmp != amplitudesRaw.end() && pBar != bars.end(); pAmp++, pBar++)
     {
@@ -247,6 +269,11 @@ void UI::clear_amplitudes()
 {
     for (auto &bar : bars)
         bar.clear();
+}
+
+void UI::set_duration(const TimeInfo *pTime)
+{
+    update_time(pTimeDuration, pTime);
 }
 
 void UI::update_time(std::unique_ptr<Window> &pWin, const TimeInfo *pTime)
