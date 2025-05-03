@@ -9,11 +9,9 @@
 
 class Window
 {
-    int y, x;
-
 public:
+    int height, width;
     std::unique_ptr<WINDOW, int (*)(WINDOW *)> p_win;
-    int width, height;
 
     explicit Window(int height, int width, int y, int x, const std::unique_ptr<Window> &pParent = NULL);
 
@@ -46,15 +44,11 @@ public:
 
 class UI
 {
-    const int
-        y,
-        x;
-
     static constexpr int
         nbars = N_BINS,
         nsegments = N_SEGMENTS,
         window_margin = 2,
-        bar_height = 10,
+        bar_height = 12,
         bar_width = 2,
         bar_margin = 1,
         win_bars_width = nbars * bar_width + (nbars - 1) * bar_margin,
@@ -63,13 +57,10 @@ class UI
         width = window_margin + win_bars_width + 2 * window_margin + win_player_width + window_margin,
         height = window_margin + win_bars_height + window_margin;
 
-    std::vector<float> segment_ratios = {0.2, 0.1, 0.7};
+    std::vector<float> segment_ratios = {0.3, 0.2, 0.5};
     std::vector<int> segment_heights;
     std::vector<Window> barSegments;
     std::vector<Bar> bars;
-
-    float amplitude_decay = 0.8;
-    bool playerInit = false, playerPlaying = false;
 
     std::unique_ptr<Window>
         pBarsContainer,

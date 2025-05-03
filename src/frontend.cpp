@@ -16,7 +16,7 @@ WINDOW *newwin_rel(const Window *pParent, int nlines, int ncols, int begin_y, in
 }
 
 Window::Window(int height, int width, int y, int x, const std::unique_ptr<Window> &pParent)
-    : height(height), width(width), y(y), x(x),
+    : height(height), width(width),
       p_win(
           pParent ? newwin_rel(pParent.get(), height, width, y, x) : newwin(height, width, y, x),
           &delwin)
@@ -88,7 +88,7 @@ void Bar::clear()
 }
 
 UI::UI(int y, int x, const std::string &fname)
-    : y(y), x(x), segment_heights(nbars, 0)
+    : segment_heights(nbars, 0)
 {
 
     pContainer = std::unique_ptr<Window>(
@@ -224,7 +224,6 @@ void UI::set_target_amplitudes(const std::vector<double> &amplitudesRaw)
 {
     auto pAmp = amplitudesRaw.begin();
     auto pBar = bars.begin();
-    int i = 0;
     double a;
 
     for (; pAmp != amplitudesRaw.end() && pBar != bars.end(); pAmp++, pBar++)
@@ -235,7 +234,6 @@ void UI::set_target_amplitudes(const std::vector<double> &amplitudesRaw)
         else if (a < 0)
             a = 0;
         pBar->set_target_amplitude(std::round(a * bar_height));
-        i++;
     }
 
     refresh();

@@ -12,7 +12,8 @@ void data_converter_uninit(void *pConv)
     ma_data_converter_uninit((ma_data_converter *)pConv, NULL);
 }
 
-void device_uninit(ma_device *pDevice){
+void device_uninit(ma_device *pDevice)
+{
     ma_device_stop(pDevice);
     ma_device_uninit(pDevice);
 }
@@ -29,12 +30,29 @@ void adjust_vol(void *buf, ma_uint64 N, float vol)
 
 void adjust_vol_null(void *buf, ma_uint64 N, float vol) {}
 
-float a0 = 0.53836, a1 = 1 - a0;
 
 double hamming(ma_uint64 n, ma_uint64 N)
 {
+    float a0 = 0.53836, a1 = 1 - a0;
     return a0 - a1 * std::cos(2 * M_PI * double(n) / N);
 }
+
+double flattop(ma_uint64 n, ma_uint64 N){
+    float 
+        a0 = 0.21557895,
+        a1 = 0.41663158,
+        a2 = 0.277263158,
+        a3 = 0.083578947,
+        a4 = 0.006947368;
+    return 
+    a0 
+    - a1*std::cos(2 * M_PI * double(n) / N)
+    + a2*std::cos(4 * M_PI * double(n) / N)
+    - a3*std::cos(6 * M_PI * double(n) / N)
+    + a4*std::cos(8 * M_PI * double(n) / N);   
+}
+
+#define WINDOWFUNC hamming
 
 template <class T>
 void apply_windowfunc(T *pData, ma_uint64 N,
@@ -51,7 +69,7 @@ void playback_data_callback(ma_device *pDevice, void *pOutput,
     (*((PlaybackHandler **)(pDevice->pUserData)))->callback(frameCount, pOutput);
 }
 
-void print_audio_status(AudioStatus status)
+void print_app_status(AppStatus status)
 {
     switch (status)
     {
@@ -132,15 +150,14 @@ void AudioBuffer::clear()
     seek(0);
 }
 
-FFT::FFT(ma_uint64 N, fft_numeric *timedata, ma_uint32 sampleRate) : N(N),
+FFT::FFT(ma_uint64 N, fft_numeric *timedata, ma_uint32 sampleRate) : FFTcfg(kiss_fftr_alloc(N, 0, NULL, NULL), &kiss_fftr_free),
                                                                      timedata(timedata),
-                                                                     amplitudesRaw(nbins, 0),
                                                                      freqdata(new kiss_fft_cpx[N]),
-                                                                     FFTcfg(kiss_fftr_alloc(N, 0, NULL, NULL), &kiss_fftr_free)
+                                                                     amplitudesRaw(nbins, 0)
 {
     windowSum = 0;
     for (ma_uint64 n = 0; n < N; n++)
-        windowSum += hamming(n, N);
+        windowSum += WINDOWFUNC(n, N);
 
     kiss_fft_cpx **ppFreq, *pEnd = freqdata.get() + N / 2;
     int i;
@@ -150,6 +167,8 @@ FFT::FFT(ma_uint64 N, fft_numeric *timedata, ma_uint32 sampleRate) : N(N),
         if (*ppFreq > pEnd)
             *ppFreq = pEnd;
     }
+
+    status = FFTcfg.get() == NULL ? ERR_INIT_BUF : SUCCESS;
 }
 
 void FFT::reduce_spectrum()
@@ -179,14 +198,15 @@ void FFT::reduce_spectrum()
 
 void FFT::compute()
 {
-    apply_windowfunc<fft_numeric>(timedata, FFT_BUFFER_FRAMES, &hamming);
+    apply_windowfunc<fft_numeric>(timedata, FFT_BUFFER_FRAMES, &WINDOWFUNC);
     kiss_fftr(FFTcfg.get(), timedata, freqdata.get());
     reduce_spectrum();
 }
 
-Player::Player(const char *filePath, UI &ui, float vol) : pDevice(NULL, &ma_device_uninit),
+Player::Player(const char *filePath, UI &ui, float vol) : pDevice(NULL, &device_uninit),
                                                           pDecoder(NULL, &ma_decoder_uninit)
 {
+    std::unique_lock<std::mutex> lck(mtx);
     auto deviceConfig = ma_device_config_init(ma_device_type_playback);
     deviceConfig.dataCallback = playback_data_callback;
     deviceConfig.pUserData = &pPlaybackHandler_;
@@ -210,11 +230,15 @@ Player::Player(const char *filePath, UI &ui, float vol) : pDevice(NULL, &ma_devi
             pDecoder = std::unique_ptr<ma_decoder, ma_result(*)(ma_decoder *)>(&decoder, &ma_decoder_uninit),
             pPlaybackHandler = std::unique_ptr<PlaybackHandler>(new PlaybackHandler(pDecoder, ui, vol)),
             true
-        )
+        ) &&
+        (status = pPlaybackHandler->status) == SUCCESS
     ) {
         // clang-format on
         pPlaybackHandler_ = pPlaybackHandler.get();
         ma_device_start(pDevice.get());
+        while (!pPlaybackHandler->allocated)
+            cv.wait(lck);
+        status = pPlaybackHandler->status;
     }
 }
 
@@ -224,8 +248,14 @@ void Player::play() { pPlaybackHandler->play(); }
 
 void Player::pause() { pPlaybackHandler->pause(); }
 
-void Player::move_playback_cursor(ma_uint8 s, bool forward) { 
+void Player::move_playback_cursor(ma_uint8 s, bool forward)
+{
     ma_device_stop(pDevice.get());
-    pPlaybackHandler->move_playback_cursor(s, forward); 
+    pPlaybackHandler->move_playback_cursor(s, forward);
     ma_device_start(pDevice.get());
+}
+
+bool Player::allocated()
+{
+    return pPlaybackHandler->allocated;
 }
